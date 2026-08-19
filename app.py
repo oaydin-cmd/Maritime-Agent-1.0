@@ -1,6 +1,7 @@
 import os
 import shutil
 import subprocess
+import io
 import streamlit as st
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
@@ -14,6 +15,7 @@ from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, Un
 from pdf2image import convert_from_path
 import pytesseract
 import docx
+from docx import Document as DocxDocument
 
 # ---------------------------------------------------------
 # 1. SAYFA VE UYGULAMA YAPILANDIRMASI
@@ -61,7 +63,6 @@ def load_all_documents(folder_path):
                 loader = PyPDFLoader(file_path)
                 docs = loader.load()
                 
-                # Metadata temizleme/düzenleme (sadece dosya adını alalım)
                 for d in docs:
                     d.metadata["source_file"] = file
                     if "page" in d.metadata:
@@ -69,7 +70,6 @@ def load_all_documents(folder_path):
                     else:
                         d.metadata["page_label"] = "Belirtilmedi"
 
-                # Okunan metin yetersizse OCR (Tesseract) çalıştır
                 if not docs or sum(len(d.page_content.strip()) for d in docs) < 50:
                     st.info(f"🔍 Taranmış PDF/OCR İşleniyor: {file}")
                     images = convert_from_path(file_path)
@@ -96,7 +96,6 @@ def load_all_documents(folder_path):
                         d.metadata["page_label"] = "Word Dokümanı"
                     all_documents.extend(docx_docs)
                 except Exception:
-                    # Yedek okuma yöntemi (python-docx)
                     doc = docx.Document(file_path)
                     full_text = "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
                     if full_text.strip():
@@ -105,7 +104,7 @@ def load_all_documents(folder_path):
                             metadata={"source_file": file, "page_label": "Word Dokümanı"}
                         ))
 
-            # C. Eski Word (.doc) İşleme (Antiword)
+            # C. Eski Word (.doc) İşleme
             elif ext == ".doc":
                 st.info(f"📄 Eski Format Word Belgesi (.doc) İşleniyor: {file}")
                 try:
@@ -167,7 +166,38 @@ if st.sidebar.button("🔄 Vektör İndeksini Yeniden Oluştur"):
     st.rerun()
 
 # ---------------------------------------------------------
-# 5. RAG VE KAYNAK GÖSTERME YAPISI
+# 5. DİNAMİK WORD FORMU ÜRETME FONKSİYONU
+# ---------------------------------------------------------
+def create_docx_form(title, content_text):
+    """Metin yanıtını formatlı bir Word (.docx) belgesine dönüştürür."""
+    doc = DocxDocument()
+    
+    # Başlık Ekle
+    doc.add_heading(title, level=0)
+    doc.add_paragraph("Şirket Emniyetli Yönetim Sistemi (SMS) Uyumlu Form / Risk Değerlendirmesi\n")
+    
+    # İçeriği Satır Satır Ekle
+    for line in content_text.split('\n'):
+        line_str = line.strip()
+        if line_str.startswith('# '):
+            doc.add_heading(line_str.replace('# ', ''), level=1)
+        elif line_str.startswith('## '):
+            doc.add_heading(line_str.replace('## ', ''), level=2)
+        elif line_str.startswith('### '):
+            doc.add_heading(line_str.replace('### ', ''), level=3)
+        elif line_str.startswith('* ') or line_str.startswith('- '):
+            doc.add_paragraph(line_str[2:], style='List Bullet')
+        elif line_str:
+            doc.add_paragraph(line_str)
+            
+    # Bellekte Word Dosyası Tamamla
+    bio = io.BytesIO()
+    doc.save(bio)
+    bio.seek(0)
+    return bio
+
+# ---------------------------------------------------------
+# 6. RAG VE SİSTEM TALİMATLARI
 # ---------------------------------------------------------
 retriever = None
 llm = None
@@ -189,10 +219,10 @@ if openrouter_api_key and vectorstore:
     system_prompt = (
         "Sen uzman bir denizcilik ve operasyon asistansın.\n"
         "ÖNCELİKLİ GÖREVİN: Aşağıda verilen şirket dokümanı bağlamını (context) kullanarak yanıt vermek.\n"
-        "EĞER sorunun cevabı şirket dokümanlarında TAM OLARAK yoksa veya eksikse:\n"
-        "1. Önce şirket dokümanlarında geçen ilgili kısımları aktar.\n"
-        "2. Ardından genel denizcilik mevzuatı (IMO, SOLAS, MARPOL, STCW vb.) ve genel bilgi birikimini kullanarak eksik kısımları tamamla.\n"
-        "3. Yanıtında hangi bilgilerin şirket dokümanından, hangi bilgilerin genel denizcilik bilgisinden geldiğini açıkça belirt.\n\n"
+        "EĞER KULLANICI BİR FORM VEYA RİSK DEĞERLENDİRMESİ İSTİYORSA:\n"
+        "1. SMS prosedürlerine tam uygun Risk Değerlendirme Formu (Risk Assessment) yapısı oluştur.\n"
+        "2. Tehlike Tanımı (Hazard Identification), Mevcut Kontroller (Existing Controls), Risk Seviyesi (Initial Risk), İlaveten Alınacak Önlemler (Additional Risk Control) ve Nihai Risk Seviyesi başlıklarını içer.\n"
+        "3. Maddeleri net, kurumsal ve denetimlerde (SIRE/PSC) geçerli olacak şekilde yapılandır.\n\n"
         "Bağlam:\n{context}"
     )
 
@@ -202,7 +232,7 @@ if openrouter_api_key and vectorstore:
     ])
 
 # ---------------------------------------------------------
-# 6. SOHBET GEÇMİŞİ VE ARAYÜZ
+# 7. SOHBET GEÇMİŞİ VE ARAYÜZ
 # ---------------------------------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -210,8 +240,16 @@ if "messages" not in st.session_state:
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        # Eğer mesaj içerisinde indirme verisi varsa butonunu tekrar çiz
+        if "docx_bytes" in message:
+            st.download_button(
+                label="📥 Formu Word (.docx) Olarak İndir",
+                data=message["docx_bytes"],
+                file_name=message.get("file_name", "SMS_Form.docx"),
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
 
-if user_input := st.chat_input("SMS prosedürleri, Word (.doc/.docx) veya Excel belgeleri hakkında soru sorun..."):
+if user_input := st.chat_input("SMS prosedürleri hakkında soru sorun veya 'Sintine temizliği için risk değerlendirmesi yap' yazın..."):
     if not openrouter_api_key:
         st.error("⚠️ Lütfen sol menüden OpenRouter API anahtarınızı girin.")
     elif not vectorstore:
@@ -222,7 +260,7 @@ if user_input := st.chat_input("SMS prosedürleri, Word (.doc/.docx) veya Excel 
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            with st.spinner("Dokümanlar taranıyor ve referanslar hazırlanıyor..."):
+            with st.spinner("SMS prosedürleri taranıyor ve form içerikleri hazırlanıyor..."):
                 try:
                     # 1. Alakalı Dokümanları Çek
                     relevant_docs = retriever.invoke(user_input)
@@ -252,7 +290,26 @@ if user_input := st.chat_input("SMS prosedürleri, Word (.doc/.docx) veya Excel 
                         final_response += "\n\n---\n**📚 Kullanılan Kaynaklar:**\n" + "\n".join([f"- {src}" for src in sources])
 
                     st.markdown(final_response)
-                    st.session_state.messages.append({"role": "assistant", "content": final_response})
+
+                    # 6. Eğer Talep Bir Form/Risk Değerlendirmesi İse Word Dosyası Üret ve İndirme Butonu Koy
+                    msg_data = {"role": "assistant", "content": final_response}
+                    
+                    keywords = ["form", "risk", "değerlendirme", "permit", "izin", "assessment"]
+                    if any(kw in user_input.lower() for kw in keywords):
+                        docx_file = create_docx_form("SMS Risk Değerlendirme ve İzin Formu", response_text)
+                        docx_bytes = docx_file.getvalue()
+                        file_name = f"SMS_Form_{user_input[:15].replace(' ', '_')}.docx"
+                        
+                        st.download_button(
+                            label="📥 Formu Word (.docx) Olarak İndir",
+                            data=docx_bytes,
+                            file_name=file_name,
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
+                        msg_data["docx_bytes"] = docx_bytes
+                        msg_data["file_name"] = file_name
+
+                    st.session_state.messages.append(msg_data)
 
                 except Exception as e:
                     st.error(f"Yanıt oluşturulurken bir hata oluştu: {str(e)}")
