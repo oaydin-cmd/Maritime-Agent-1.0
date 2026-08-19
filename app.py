@@ -12,7 +12,7 @@ from langchain_core.output_parsers import StrOutputParser
 st.set_page_config(page_title="Denizcilik SMS Asistanı", page_icon="🚢")
 st.title("🚢 Denizcilik SMS & Prosedür Asistanı (Bulut Tabanlı)")
 
-# API Key Kontrolü
+# Yan Menü Kontrolleri
 openrouter_api_key = st.sidebar.text_input("OpenRouter API Key Giriniz", type="password")
 
 uploaded_files = st.sidebar.file_uploader(
@@ -21,7 +21,7 @@ uploaded_files = st.sidebar.file_uploader(
     accept_multiple_files=True
 )
 
-# Hafıza / State Tanımlamaları
+# Session State Başlatma
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -52,9 +52,9 @@ if uploaded_files and openrouter_api_key:
             vectorstore = FAISS.from_documents(splits, embeddings)
             retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-            # OpenRouter Bağlantısı
+            # OpenRouter Bağlantısı (Stabil Model)
             llm = ChatOpenAI(
-                model="google/gemini-2.0-flash-exp:free",
+                model="google/gemini-flash-1.5-8b",
                 openai_api_key=openrouter_api_key,
                 openai_api_base="https://openrouter.ai/api/v1",
                 temperature=0.2,
@@ -79,7 +79,7 @@ if uploaded_files and openrouter_api_key:
             def format_docs(docs):
                 return "\n\n".join(doc.page_content for doc in docs)
 
-            # RAG Zincirini State Üzerinde Saklıyoruz
+            # RAG Zincirini Session State Üzerinde Saklıyoruz
             st.session_state.rag_chain = (
                 {"context": retriever | format_docs, "question": RunnablePassthrough()}
                 | prompt
@@ -89,7 +89,7 @@ if uploaded_files and openrouter_api_key:
 
             st.sidebar.success("SMS dokümanları başarıyla yüklendi ve işlendi!")
 
-# Geçmiş Mesajları Listeleme
+# Geçmiş Mesajları Ekran Katmanında Göster
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
