@@ -51,7 +51,6 @@ if openrouter_api_key:
         openai_api_base="https://openrouter.ai/api/v1",
         temperature=0.2
     )
-)
 
         system_prompt = (
             "Sen şirket içi belgelere dayalı yanıt veren resmi bir denizcilik ve operasyon asistansın.\n"
