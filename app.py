@@ -60,9 +60,13 @@ def save_message_to_db(role, content, docx_bytes=None, file_name=None):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # docx_bytes verisinin bytes türünde olduğundan emin oluyoruz
+    binary_data = sqlite3.Binary(docx_bytes) if isinstance(docx_bytes, bytes) else None
+    
     cursor.execute(
         "INSERT INTO messages (timestamp, role, content, docx_blob, file_name) VALUES (?, ?, ?, ?, ?)",
-        (now, role, content, docx_bytes, file_name)
+        (now, role, content, binary_data, file_name)
     )
     conn.commit()
     conn.close()
@@ -83,9 +87,10 @@ def load_messages_from_db():
             "role": row[2],
             "content": row[3]
         }
-        if row[4]:  # docx_blob
-            msg["docx_bytes"] = row[4]
-            msg["file_name"] = row[5]
+        # Yalnızca geçerli bir byte verisi varsa ekle
+        if row[4] and isinstance(row[4], (bytes, bytearray)) and len(row[4]) > 0:
+            msg["docx_bytes"] = bytes(row[4])
+            msg["file_name"] = row[5] or "SMS_Risk_Assessment.docx"
         messages.append(msg)
     return messages
 
@@ -377,20 +382,22 @@ if openrouter_api_key and vectorstore:
     ])
 
 # ---------------------------------------------------------
-# 7. SOHBET GEÇMİŞİ YÜKLEME VE ARAYÜZ
+# 7. SOHBET GEÇMİŞİ YÜKLEME VE ARAYÜZ (GÜVENLİ RENDER)
 # ---------------------------------------------------------
 if "messages" not in st.session_state:
-    # Uygulama açıldığında SQLite veritabanından geçmişi çek
     st.session_state.messages = load_messages_from_db()
 
 # Geçmiş tüm mesajları ekrana çizdir
 for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
-        if "docx_bytes" in message:
+        
+        # GÜVENLİK KONTROLÜ: Sadece veri 'bytes' türündeyse ve içi doluysa indirme butonunu çiz
+        docx_data = message.get("docx_bytes")
+        if docx_data and isinstance(docx_data, bytes) and len(docx_data) > 0:
             st.download_button(
                 label="📥 Denetim Uyumlu Formu Word (.docx) Olarak İndir",
-                data=message["docx_bytes"],
+                data=docx_data,
                 file_name=message.get("file_name", "SMS_Risk_Assessment.docx"),
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 key=f"dl_btn_db_{idx}"
@@ -403,7 +410,6 @@ if user_input := st.chat_input("Mesajınız... (Örn: 'Kaptan benim adım Ahmet,
     elif not vectorstore:
         st.error("⚠️ Doküman bulunamadı. Lütfen 'docs' klasörünü kontrol edin.")
     else:
-        # Kullanıcı mesajını ekran ve veritabanına ekle
         st.session_state.messages.append({"role": "user", "content": user_input})
         save_message_to_db("user", user_input)
         
@@ -413,15 +419,12 @@ if user_input := st.chat_input("Mesajınız... (Örn: 'Kaptan benim adım Ahmet,
         with st.chat_message("assistant"):
             with st.spinner("Sohbet hafızası ve SMS prosedürleri inceleniyor..."):
                 try:
-                    # 1. Doküman araması yap
                     relevant_docs = retriever.invoke(user_input)
                     context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "İlgili SMS dokümanı bulunamadı."
                     
-                    # 2. Geçmiş sohbet hafızasını derle (Son 15 mesajı bağlam olarak modele ilet)
                     recent_history = load_messages_from_db()[-15:]
                     history_str = "\n".join([f"{m['timestamp']} - {m['role'].upper()}: {m['content']}" for m in recent_history])
 
-                    # 3. Promptu oluştur ve LLM'e gönder
                     formatted_prompt = prompt.format(context=context_text, chat_history=history_str, question=user_input)
                     llm_response = llm.invoke(formatted_prompt)
                     response_text = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
@@ -429,7 +432,6 @@ if user_input := st.chat_input("Mesajınız... (Örn: 'Kaptan benim adım Ahmet,
                     if not response_text.strip():
                         response_text = "⚠️ Yapay zeka boş yanıt döndürdü. Lütfen sorgunuzu tekrar iletin."
 
-                    # Kaynakları derle
                     sources = []
                     seen = set()
                     for doc in relevant_docs:
@@ -456,24 +458,26 @@ if user_input := st.chat_input("Mesajınız... (Örn: 'Kaptan benim adım Ahmet,
                             docx_bytes = docx_file.getvalue()
                             file_name = f"SMS_RA_{user_input[:15].replace(' ', '_')}.docx"
                             
-                            st.download_button(
-                                label="📥 Denetim Uyumlu Formu Word (.docx) Olarak İndir",
-                                data=docx_bytes,
-                                file_name=file_name,
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                key=f"dl_btn_current_{len(st.session_state.messages)}"
-                            )
+                            # GÜVENLİK KONTROLÜ
+                            if docx_bytes and isinstance(docx_bytes, bytes):
+                                st.download_button(
+                                    label="📥 Denetim Uyumlu Formu Word (.docx) Olarak İndir",
+                                    data=docx_bytes,
+                                    file_name=file_name,
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    key=f"dl_btn_current_{len(st.session_state.messages)}"
+                                )
                         except Exception as docx_err:
                             st.warning(f"⚠️ Word formu oluşturulurken bir uyarı alındı: {str(docx_err)}")
 
-                    # Yanıtı veritabanına ve ekran hafızasına kaydet
                     save_message_to_db("assistant", final_response, docx_bytes, file_name)
-                    st.session_state.messages.append({
-                        "role": "assistant", 
-                        "content": final_response, 
-                        "docx_bytes": docx_bytes, 
-                        "file_name": file_name
-                    })
+                    
+                    msg_obj = {"role": "assistant", "content": final_response}
+                    if docx_bytes and isinstance(docx_bytes, bytes):
+                        msg_obj["docx_bytes"] = docx_bytes
+                        msg_obj["file_name"] = file_name
+
+                    st.session_state.messages.append(msg_obj)
 
                 except Exception as e:
                     st.error(f"Yanıt oluşturulurken hata oluştu: {str(e)}")
