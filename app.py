@@ -42,7 +42,7 @@ def get_llm():
         return None
 
     return ChatOpenAI(
-        model="anthropic/claude-3.5-sonnet:beta",  # OpenRouter üzerindeki geçerli model adresi
+        model="anthropic/claude-3.5-sonnet",  # Doğru OpenRouter Model ID
         openai_api_key=api_key,
         openai_api_base="https://openrouter.ai/api/v1",
         timeout=45,       # Yavaş/kısıtlı bağlantılar için zaman aşımı süresi
