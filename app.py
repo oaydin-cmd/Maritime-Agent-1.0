@@ -7,8 +7,6 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
 
 # Belge Yükleyiciler ve OCR Araçları
@@ -37,7 +35,7 @@ if not openrouter_api_key:
     openrouter_api_key = st.sidebar.text_input("OpenRouter API Key", type="password", help="API anahtarınızı buraya girin.")
 
 # ---------------------------------------------------------
-# 3. EMBEDDINGS VE HER WORD SÜRÜMÜNÜ DESTEKLEYEN YÜKLEYİCİ
+# 3. EMBEDDINGS VE KAYNAK METADATA'SINI KORUYAN YÜKLEYİCİ
 # ---------------------------------------------------------
 @st.cache_resource
 def get_embeddings():
@@ -63,17 +61,27 @@ def load_all_documents(folder_path):
                 loader = PyPDFLoader(file_path)
                 docs = loader.load()
                 
+                # Metadata temizleme/düzenleme (sadece dosya adını alalım)
+                for d in docs:
+                    d.metadata["source_file"] = file
+                    if "page" in d.metadata:
+                        d.metadata["page_label"] = f"Sayfa {d.metadata['page'] + 1}"
+                    else:
+                        d.metadata["page_label"] = "Belirtilmedi"
+
                 # Okunan metin yetersizse OCR (Tesseract) çalıştır
                 if not docs or sum(len(d.page_content.strip()) for d in docs) < 50:
                     st.info(f"🔍 Taranmış PDF/OCR İşleniyor: {file}")
                     images = convert_from_path(file_path)
-                    ocr_text = ""
+                    ocr_docs = []
                     for i, image in enumerate(images):
                         text = pytesseract.image_to_string(image, lang="tur+eng")
-                        ocr_text += f"\n--- Sayfa {i+1} ---\n" + text
-                    
-                    if ocr_text.strip():
-                        docs = [Document(page_content=ocr_text, metadata={"source": file})]
+                        if text.strip():
+                            ocr_docs.append(Document(
+                                page_content=text, 
+                                metadata={"source_file": file, "page_label": f"Sayfa {i+1} (OCR)"}
+                            ))
+                    docs = ocr_docs
                 
                 all_documents.extend(docs)
 
@@ -82,23 +90,32 @@ def load_all_documents(folder_path):
                 st.info(f"📄 Word Belgesi (.docx) İşleniyor: {file}")
                 try:
                     loader = Docx2txtLoader(file_path)
-                    all_documents.extend(loader.load())
+                    docx_docs = loader.load()
+                    for d in docx_docs:
+                        d.metadata["source_file"] = file
+                        d.metadata["page_label"] = "Word Dokümanı"
+                    all_documents.extend(docx_docs)
                 except Exception:
                     # Yedek okuma yöntemi (python-docx)
                     doc = docx.Document(file_path)
                     full_text = "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
                     if full_text.strip():
-                        all_documents.append(Document(page_content=full_text, metadata={"source": file}))
+                        all_documents.append(Document(
+                            page_content=full_text, 
+                            metadata={"source_file": file, "page_label": "Word Dokümanı"}
+                        ))
 
-            # C. Eski Word (.doc) İşleme (Antiword ile)
+            # C. Eski Word (.doc) İşleme (Antiword)
             elif ext == ".doc":
                 st.info(f"📄 Eski Format Word Belgesi (.doc) İşleniyor: {file}")
                 try:
-                    # Linux ortamında antiword komutu ile metne çevirme
                     result = subprocess.run(["antiword", file_path], capture_output=True, text=True, check=True)
                     doc_text = result.stdout
                     if doc_text.strip():
-                        all_documents.append(Document(page_content=doc_text, metadata={"source": file}))
+                        all_documents.append(Document(
+                            page_content=doc_text, 
+                            metadata={"source_file": file, "page_label": "Eski Word (.doc)"}
+                        ))
                 except Exception as doc_err:
                     st.error(f"❌ Eski '.doc' dosyası okunamadı ({file}): {str(doc_err)}")
 
@@ -106,7 +123,11 @@ def load_all_documents(folder_path):
             elif ext == ".xlsx":
                 st.info(f"📊 Excel Belgesi İşleniyor: {file}")
                 loader = UnstructuredExcelLoader(file_path, mode="single")
-                all_documents.extend(loader.load())
+                excel_docs = loader.load()
+                for d in excel_docs:
+                    d.metadata["source_file"] = file
+                    d.metadata["page_label"] = "Excel Sayfası"
+                all_documents.extend(excel_docs)
 
         except Exception as e:
             st.error(f"❌ '{file}' işlenirken hata oluştu: {str(e)}")
@@ -146,12 +167,13 @@ if st.sidebar.button("🔄 Vektör İndeksini Yeniden Oluştur"):
     st.rerun()
 
 # ---------------------------------------------------------
-# 5. RAG ZİNCİRİ (CHAIN)
+# 5. RAG VE KAYNAK GÖSTERME YAPISI
 # ---------------------------------------------------------
-rag_chain = None
+retriever = None
+llm = None
 
 if openrouter_api_key and vectorstore:
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
 
     llm = ChatOpenAI(
         model="openai/gpt-4o-mini",
@@ -179,16 +201,6 @@ if openrouter_api_key and vectorstore:
         ("human", "{question}"),
     ])
 
-    def format_docs(docs):
-        return "\n\n".join(doc.page_content for doc in docs)
-
-    rag_chain = (
-        {"context": retriever | format_docs, "question": RunnablePassthrough()}
-        | prompt
-        | llm
-        | StrOutputParser()
-    )
-
 # ---------------------------------------------------------
 # 6. SOHBET GEÇMİŞİ VE ARAYÜZ
 # ---------------------------------------------------------
@@ -210,10 +222,37 @@ if user_input := st.chat_input("SMS prosedürleri, Word (.doc/.docx) veya Excel 
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            with st.spinner("Dokümanlar taranıyor..."):
+            with st.spinner("Dokümanlar taranıyor ve referanslar hazırlanıyor..."):
                 try:
-                    response_text = rag_chain.invoke(user_input)
-                    st.markdown(response_text)
-                    st.session_state.messages.append({"role": "assistant", "content": response_text})
+                    # 1. Alakalı Dokümanları Çek
+                    relevant_docs = retriever.invoke(user_input)
+                    
+                    # 2. Bağlam Metnini Oluştur
+                    context_text = "\n\n".join([d.page_content for d in relevant_docs])
+                    
+                    # 3. LLM Yanıtını Üret
+                    formatted_prompt = prompt.format(context=context_text, question=user_input)
+                    response_text = llm.invoke(formatted_prompt).content
+                    
+                    # 4. Kaynak Bilgilerini (Citation) Derle
+                    sources = []
+                    seen = set()
+                    for doc in relevant_docs:
+                        file_name = doc.metadata.get("source_file", doc.metadata.get("source", "Bilinmeyen Dosya"))
+                        page_info = doc.metadata.get("page_label", "")
+                        source_str = f"📄 **{file_name}** ({page_info})"
+                        
+                        if source_str not in seen:
+                            seen.add(source_str)
+                            sources.append(source_str)
+
+                    # 5. Yanıta Kaynakları Ekle
+                    final_response = response_text
+                    if sources:
+                        final_response += "\n\n---\n**📚 Kullanılan Kaynaklar:**\n" + "\n".join([f"- {src}" for src in sources])
+
+                    st.markdown(final_response)
+                    st.session_state.messages.append({"role": "assistant", "content": final_response})
+
                 except Exception as e:
                     st.error(f"Yanıt oluşturulurken bir hata oluştu: {str(e)}")
