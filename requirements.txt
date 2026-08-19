@@ -6,3 +6,7 @@ langchain-openai>=0.2.0
 faiss-cpu
 pypdf
 sentence-transformers
+pytesseract
+pdf2image
+python-docx
+openpyxl
