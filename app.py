@@ -44,10 +44,10 @@ if uploaded_files and api_key:
         retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
         # Bulut Üzerinde Çalışan Yapay Zeka Modeli
-        llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    google_api_key=api_key,
-    temperature=0.2
+       llm = ChatOpenAI(
+    model="google/gemini-flash-1.5",
+    openai_api_key=openrouter_api_key,
+    openai_api_base="https://openrouter.ai/api/v1"
 )
 
         system_prompt = (
