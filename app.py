@@ -52,9 +52,9 @@ if uploaded_files and openrouter_api_key:
             vectorstore = FAISS.from_documents(splits, embeddings)
             retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-            # OpenRouter Bağlantısı (Stabil Model)
+            # OpenRouter Bağlantısı (Garanti / Test Edilmiş Model ID)
             llm = ChatOpenAI(
-                model="google/gemini-flash-1.5-8b",
+                model="openai/gpt-4o-mini",
                 openai_api_key=openrouter_api_key,
                 openai_api_base="https://openrouter.ai/api/v1",
                 temperature=0.2,
