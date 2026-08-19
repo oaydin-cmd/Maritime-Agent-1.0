@@ -28,14 +28,21 @@ def get_llm():
     """
     OpenRouter API üzerinden Yapay Zeka modelini başlatır.
     """
-    api_key = os.getenv("OPENROUTER_API_KEY") or st.secrets.get("OPENROUTER_API_KEY")
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    
+    # Eğer environment variable yoksa Streamlit Secrets kontrol et
+    if not api_key:
+        try:
+            api_key = st.secrets.get("OPENROUTER_API_KEY")
+        except Exception:
+            pass
     
     if not api_key:
-        st.error("OPENROUTER_API_KEY bulunamadı! Lütfen ortam değişkenlerini kontrol edin.")
+        st.error("OPENROUTER_API_KEY bulunamadı! Lütfen ortam değişkenlerini veya secrets.toml dosyasını kontrol edin.")
         return None
 
     return ChatOpenAI(
-        model="anthropic/claude-3.5-sonnet",  # Kullandığınız modeli buraya yazabilirsiniz
+        model="anthropic/claude-3.5-sonnet:beta",  # OpenRouter üzerindeki geçerli model adresi
         openai_api_key=api_key,
         openai_api_base="https://openrouter.ai/api/v1",
         timeout=45,       # Yavaş/kısıtlı bağlantılar için zaman aşımı süresi
@@ -60,15 +67,17 @@ else:
 # LLM Modeli Başlat
 llm = get_llm()
 
-# Chat/Uygulama Mantığınız
+# Chat/Uygulama Mantığı
 if llm:
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
+    # Geçmiş mesajları ekrana yazdır
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
+    # Kullanıcı girdi alanı
     if user_input := st.chat_input("Sorunuzu yazın..."):
         st.session_state.messages.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
