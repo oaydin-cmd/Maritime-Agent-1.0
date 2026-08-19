@@ -45,7 +45,7 @@ if uploaded_files and openrouter_api_key:
 
         # OpenRouter Bağlantısı
         llm = ChatOpenAI(
-            model="google/gemini-flash-1.5",
+            model="google/gemini-2.0-flash-exp:free",
             openai_api_key=openrouter_api_key,
             openai_api_base="https://openrouter.ai/api/v1",
             temperature=0.2
