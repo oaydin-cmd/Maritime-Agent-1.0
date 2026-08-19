@@ -5,9 +5,9 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
-from langchain.chains import create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
 
 st.set_page_config(page_title="Denizcilik SMS Asistanı", page_icon="🚢")
 st.title("🚢 Denizcilik SMS & Prosedür Asistanı (Bulut Tabanlı)")
@@ -43,7 +43,7 @@ if uploaded_files and openrouter_api_key:
         vectorstore = FAISS.from_documents(splits, embeddings)
         retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-        # OpenRouter Üzerinden Modellere Bağlantı
+        # OpenRouter Bağlantısı
         llm = ChatOpenAI(
             model="google/gemini-flash-1.5",
             openai_api_key=openrouter_api_key,
@@ -55,16 +55,25 @@ if uploaded_files and openrouter_api_key:
             "Sen şirket içi belgelere dayalı yanıt veren resmi bir denizcilik ve operasyon asistansın.\n"
             "Sadece sana sunulan aşağıdaki bağlamı (context) kullanarak soruya cevap ver.\n"
             "Sorunun cevabı dokümanda yoksa kibarca 'Bu bilgi şirket dokümanlarında bulunmamaktadır.' de.\n\n"
-            "{context}"
+            "Bağlam:\n{context}"
         )
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
-            ("human", "{input}"),
+            ("human", "{question}"),
         ])
 
-        question_answer_chain = create_stuff_documents_chain(llm, prompt)
-        rag_chain = create_retrieval_chain(retriever, question_answer_chain)
+        # Dokümanları birleştirme fonksiyonu
+        def format_docs(docs):
+            return "\n\n".join(doc.page_content for doc in docs)
+
+        # LCEL RAG Zinciri Yapısı (v0.3+ Uyumlu)
+        rag_chain = (
+            {"context": retriever | format_docs, "question": RunnablePassthrough()}
+            | prompt
+            | llm
+            | StrOutputParser()
+        )
 
         st.success("SMS dokümanları başarıyla yüklendi!")
 
@@ -82,10 +91,10 @@ if uploaded_files and openrouter_api_key:
 
         with st.chat_message("assistant"):
             with st.spinner("Yanıt hazırlanıyor..."):
-                response = rag_chain.invoke({"input": user_input})
-                st.markdown(response["answer"])
+                response_text = rag_chain.invoke(user_input)
+                st.markdown(response_text)
 
-        st.session_state.messages.append({"role": "assistant", "content": response["answer"]})
+        st.session_state.messages.append({"role": "assistant", "content": response_text})
 
 elif not openrouter_api_key:
     st.info("Lütfen sol menüden geçerli bir OpenRouter API anahtarı girin.")
