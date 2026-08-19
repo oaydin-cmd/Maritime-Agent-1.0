@@ -1,5 +1,6 @@
 import os
 import shutil
+import subprocess
 import streamlit as st
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
@@ -14,6 +15,7 @@ from langchain_core.documents import Document
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, UnstructuredExcelLoader
 from pdf2image import convert_from_path
 import pytesseract
+import docx
 
 # ---------------------------------------------------------
 # 1. SAYFA VE UYGULAMA YAPILANDIRMASI
@@ -35,7 +37,7 @@ if not openrouter_api_key:
     openrouter_api_key = st.sidebar.text_input("OpenRouter API Key", type="password", help="API anahtarınızı buraya girin.")
 
 # ---------------------------------------------------------
-# 3. EMBEDDINGS VE DOKÜMAN YÜKLEME FONKSİYONLARI
+# 3. EMBEDDINGS VE HER WORD SÜRÜMÜNÜ DESTEKLEYEN YÜKLEYİCİ
 # ---------------------------------------------------------
 @st.cache_resource
 def get_embeddings():
@@ -61,7 +63,7 @@ def load_all_documents(folder_path):
                 loader = PyPDFLoader(file_path)
                 docs = loader.load()
                 
-                # Eğer okunan metin yoksa veya çok azsa OCR çalıştır
+                # Okunan metin yetersizse OCR (Tesseract) çalıştır
                 if not docs or sum(len(d.page_content.strip()) for d in docs) < 50:
                     st.info(f"🔍 Taranmış PDF/OCR İşleniyor: {file}")
                     images = convert_from_path(file_path)
@@ -75,13 +77,32 @@ def load_all_documents(folder_path):
                 
                 all_documents.extend(docs)
 
-            # B. Word (.docx) İşleme
+            # B. Modern Word (.docx) İşleme
             elif ext == ".docx":
-                st.info(f"📄 Word Belgesi İşleniyor: {file}")
-                loader = Docx2txtLoader(file_path)
-                all_documents.extend(loader.load())
+                st.info(f"📄 Word Belgesi (.docx) İşleniyor: {file}")
+                try:
+                    loader = Docx2txtLoader(file_path)
+                    all_documents.extend(loader.load())
+                except Exception:
+                    # Yedek okuma yöntemi (python-docx)
+                    doc = docx.Document(file_path)
+                    full_text = "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
+                    if full_text.strip():
+                        all_documents.append(Document(page_content=full_text, metadata={"source": file}))
 
-            # C. Excel (.xlsx) İşleme
+            # C. Eski Word (.doc) İşleme (Antiword ile)
+            elif ext == ".doc":
+                st.info(f"📄 Eski Format Word Belgesi (.doc) İşleniyor: {file}")
+                try:
+                    # Linux ortamında antiword komutu ile metne çevirme
+                    result = subprocess.run(["antiword", file_path], capture_output=True, text=True, check=True)
+                    doc_text = result.stdout
+                    if doc_text.strip():
+                        all_documents.append(Document(page_content=doc_text, metadata={"source": file}))
+                except Exception as doc_err:
+                    st.error(f"❌ Eski '.doc' dosyası okunamadı ({file}): {str(doc_err)}")
+
+            # D. Excel (.xlsx) İşleme
             elif ext == ".xlsx":
                 st.info(f"📊 Excel Belgesi İşleniyor: {file}")
                 loader = UnstructuredExcelLoader(file_path, mode="single")
@@ -97,7 +118,6 @@ def load_all_documents(folder_path):
 # ---------------------------------------------------------
 @st.cache_resource
 def load_or_create_vectorstore():
-    # Önceden kaydedilmiş indeks varsa diskten oku
     if os.path.exists(INDEX_DIR):
         return FAISS.load_local(
             INDEX_DIR, 
@@ -105,7 +125,6 @@ def load_or_create_vectorstore():
             allow_dangerous_deserialization=True
         )
     
-    # Yoksa dokümanları tara ve sıfırdan oluştur
     documents, error = load_all_documents(DOCS_DIR)
 
     if error or not documents:
@@ -120,7 +139,6 @@ def load_or_create_vectorstore():
 
 vectorstore = load_or_create_vectorstore()
 
-# İndeks Yenileme Butonu
 if st.sidebar.button("🔄 Vektör İndeksini Yeniden Oluştur"):
     if os.path.exists(INDEX_DIR):
         shutil.rmtree(INDEX_DIR)
@@ -128,7 +146,7 @@ if st.sidebar.button("🔄 Vektör İndeksini Yeniden Oluştur"):
     st.rerun()
 
 # ---------------------------------------------------------
-# 5. RAG ZİNCİRİ (CHAIN) KURULUMU
+# 5. RAG ZİNCİRİ (CHAIN)
 # ---------------------------------------------------------
 rag_chain = None
 
@@ -172,31 +190,25 @@ if openrouter_api_key and vectorstore:
     )
 
 # ---------------------------------------------------------
-# 6. SOHBET GEÇMİŞİ VE ARAYÜZ (Giriş Kutusu Daima Sabit)
+# 6. SOHBET GEÇMİŞİ VE ARAYÜZ
 # ---------------------------------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Eski Mesajları Ekrana Bas
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Mesaj Giriş Kutusu (Koşullardan bağımsız olarak daima ekranın altındadır)
-if user_input := st.chat_input("SMS prosedürleri, Word veya Excel belgeleri hakkında soru sorun..."):
-    
-    # Hata kontrolleri
+if user_input := st.chat_input("SMS prosedürleri, Word (.doc/.docx) veya Excel belgeleri hakkında soru sorun..."):
     if not openrouter_api_key:
         st.error("⚠️ Lütfen sol menüden OpenRouter API anahtarınızı girin.")
     elif not vectorstore:
         st.error("⚠️ 'docs' klasöründe okunabilir doküman bulunamadı. Lütfen dosyaları 'docs' klasörüne yükleyip indeksi yenileyin.")
     else:
-        # Kullanıcı mesajını göster ve hafızaya ekle
         st.session_state.messages.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
             st.markdown(user_input)
 
-        # Asistan yanıtını üret
         with st.chat_message("assistant"):
             with st.spinner("Dokümanlar taranıyor..."):
                 try:
