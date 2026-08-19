@@ -21,77 +21,93 @@ uploaded_files = st.sidebar.file_uploader(
     accept_multiple_files=True
 )
 
+# Hafıza / State Tanımlamaları
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "rag_chain" not in st.session_state:
+    st.session_state.rag_chain = None
+
+# Doküman İşleme Butonu ve RAG Zinciri Kurulumu
 if uploaded_files and openrouter_api_key:
-    with st.spinner("Dokümanlar bulutta işleniyor..."):
-        all_docs = []
-        for uploaded_file in uploaded_files:
-            temp_path = f"temp_{uploaded_file.name}"
-            with open(temp_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            
-            loader = PyPDFLoader(temp_path)
-            docs = loader.load()
-            all_docs.extend(docs)
-            
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+    if st.sidebar.button("Dokümanları İşle"):
+        with st.spinner("Dokümanlar bulutta işleniyor..."):
+            all_docs = []
+            for uploaded_file in uploaded_files:
+                temp_path = f"temp_{uploaded_file.name}"
+                with open(temp_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                
+                loader = PyPDFLoader(temp_path)
+                docs = loader.load()
+                all_docs.extend(docs)
+                
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
 
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-        splits = text_splitter.split_documents(all_docs)
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+            splits = text_splitter.split_documents(all_docs)
 
-        embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-        vectorstore = FAISS.from_documents(splits, embeddings)
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+            embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+            vectorstore = FAISS.from_documents(splits, embeddings)
+            retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-        # OpenRouter Bağlantısı
-        llm = ChatOpenAI(
-            model="google/gemini-2.0-flash-exp:free",
-            openai_api_key=openrouter_api_key,
-            openai_api_base="https://openrouter.ai/api/v1",
-            temperature=0.2
-        )
+            # OpenRouter Bağlantısı
+            llm = ChatOpenAI(
+                model="google/gemini-2.0-flash-exp:free",
+                openai_api_key=openrouter_api_key,
+                openai_api_base="https://openrouter.ai/api/v1",
+                temperature=0.2,
+                default_headers={
+                    "HTTP-Referer": "https://streamlit.io",
+                    "X-Title": "Maritime Agent RAG"
+                }
+            )
 
-        system_prompt = (
-            "Sen şirket içi belgelere dayalı yanıt veren resmi bir denizcilik ve operasyon asistansın.\n"
-            "Sadece sana sunulan aşağıdaki bağlamı (context) kullanarak soruya cevap ver.\n"
-            "Sorunun cevabı dokümanda yoksa kibarca 'Bu bilgi şirket dokümanlarında bulunmamaktadır.' de.\n\n"
-            "Bağlam:\n{context}"
-        )
+            system_prompt = (
+                "Sen şirket içi belgelere dayalı yanıt veren resmi bir denizcilik ve operasyon asistansın.\n"
+                "Sadece sana sunulan aşağıdaki bağlamı (context) kullanarak soruya cevap ver.\n"
+                "Sorunun cevabı dokümanda yoksa kibarca 'Bu bilgi şirket dokümanlarında bulunmamaktadır.' de.\n\n"
+                "Bağlam:\n{context}"
+            )
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("human", "{question}"),
-        ])
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                ("human", "{question}"),
+            ])
 
-        # Dokümanları birleştirme fonksiyonu
-        def format_docs(docs):
-            return "\n\n".join(doc.page_content for doc in docs)
+            def format_docs(docs):
+                return "\n\n".join(doc.page_content for doc in docs)
 
-        # LCEL RAG Zinciri Yapısı (v0.3+ Uyumlu)
-        rag_chain = (
-            {"context": retriever | format_docs, "question": RunnablePassthrough()}
-            | prompt
-            | llm
-            | StrOutputParser()
-        )
+            # RAG Zincirini State Üzerinde Saklıyoruz
+            st.session_state.rag_chain = (
+                {"context": retriever | format_docs, "question": RunnablePassthrough()}
+                | prompt
+                | llm
+                | StrOutputParser()
+            )
 
-        st.success("SMS dokümanları başarıyla yüklendi!")
+            st.sidebar.success("SMS dokümanları başarıyla yüklendi ve işlendi!")
 
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+# Geçmiş Mesajları Listeleme
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    if user_input := st.chat_input("SMS prosedürü veya formlar hakkında soru sorun..."):
+# Kullanıcı Etkileşimi
+if user_input := st.chat_input("SMS prosedürü veya formlar hakkında soru sorun..."):
+    if not openrouter_api_key:
+        st.error("Lütfen sol menüden OpenRouter API anahtarınızı girin.")
+    elif st.session_state.rag_chain is None:
+        st.warning("Lütfen önce PDF dosyalarınızı yükleyip 'Dokümanları İşle' butonuna tıklayın.")
+    else:
         st.session_state.messages.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
             with st.spinner("Yanıt hazırlanıyor..."):
-                response_text = rag_chain.invoke(user_input)
+                response_text = st.session_state.rag_chain.invoke(user_input)
                 st.markdown(response_text)
 
         st.session_state.messages.append({"role": "assistant", "content": response_text})
