@@ -2,6 +2,8 @@ import os
 import shutil
 import subprocess
 import io
+import datetime
+import sqlite3
 import streamlit as st
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -26,23 +28,94 @@ from docx.oxml.ns import qn
 # ---------------------------------------------------------
 # 1. SAYFA VE UYGULAMA YAPILANDIRMASI
 # ---------------------------------------------------------
-st.set_page_config(page_title="Denizcilik SMS Asistanı", page_icon="🚢", layout="wide")
-st.title("🚢 Denizcilik SMS & Detaylı Risk/Form Asistanı")
+st.set_page_config(page_title="Denizcilik SMS & Hafızalı Asistan", page_icon="🚢", layout="wide")
+st.title("🚢 Denizcilik SMS Asistanı (Kalıcı Hafıza Sistemli)")
 
 DOCS_DIR = "docs"
 INDEX_DIR = "faiss_index"
+DB_PATH = "chat_history.db"
 
 # ---------------------------------------------------------
-# 2. SİDEBAR VE API KEY KONTROLÜ
+# 2. SÜREKLİ VERİTABANI (SQLITE KALICI HAFIZA)
 # ---------------------------------------------------------
-st.sidebar.header("⚙️ Ayarlar")
+def init_db():
+    """Tüm mesajları ve konuşmaları tarih/saat ile kaydeden veritabanı tablosu."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            role TEXT,
+            content TEXT,
+            docx_blob BLOB,
+            file_name TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def save_message_to_db(role, content, docx_bytes=None, file_name=None):
+    """Her yazılanı ve söylenen yanıtı anında kaydeder."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute(
+        "INSERT INTO messages (timestamp, role, content, docx_blob, file_name) VALUES (?, ?, ?, ?, ?)",
+        (now, role, content, docx_bytes, file_name)
+    )
+    conn.commit()
+    conn.close()
+
+def load_messages_from_db():
+    """Eski oturumlardan kalan tüm konuşma geçmişini yükler."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, timestamp, role, content, docx_blob, file_name FROM messages ORDER BY id ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    messages = []
+    for row in rows:
+        msg = {
+            "id": row[0],
+            "timestamp": row[1],
+            "role": row[2],
+            "content": row[3]
+        }
+        if row[4]:  # docx_blob
+            msg["docx_bytes"] = row[4]
+            msg["file_name"] = row[5]
+        messages.append(msg)
+    return messages
+
+def clear_db_history():
+    """Tüm sohbet hafızasını temizlemek istenirse kullanılır."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM messages")
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# ---------------------------------------------------------
+# 3. SİDEBAR VE API KEY KONTROLÜ
+# ---------------------------------------------------------
+st.sidebar.header("⚙️ Ayarlar & Hafıza Yönetimi")
 openrouter_api_key = st.secrets.get("OPENROUTER_API_KEY") if "OPENROUTER_API_KEY" in st.secrets else None
 
 if not openrouter_api_key:
     openrouter_api_key = st.sidebar.text_input("OpenRouter API Key", type="password")
 
+if st.sidebar.button("🗑️ Tüm Sohbet Hafızasını Sıfırla"):
+    clear_db_history()
+    st.session_state.messages = []
+    st.success("Tüm sohbet veritabanı temizlendi.")
+    st.rerun()
+
 # ---------------------------------------------------------
-# 3. EMBEDDINGS VE DOKÜMAN YÜKLEME
+# 4. EMBEDDINGS VE DOKÜMAN YÜKLEME
 # ---------------------------------------------------------
 @st.cache_resource
 def get_embeddings():
@@ -109,9 +182,6 @@ def load_all_documents(folder_path):
 
     return all_documents, None
 
-# ---------------------------------------------------------
-# 4. FAISS İNDEKS KONTROLÜ
-# ---------------------------------------------------------
 @st.cache_resource
 def load_or_create_vectorstore():
     if os.path.exists(INDEX_DIR):
@@ -127,17 +197,16 @@ def load_or_create_vectorstore():
 
 vectorstore = load_or_create_vectorstore()
 
-if st.sidebar.button("🔄 İndeksi Yenile"):
+if st.sidebar.button("🔄 SMS Doküman İndeksini Yenile"):
     if os.path.exists(INDEX_DIR):
         shutil.rmtree(INDEX_DIR)
     st.cache_resource.clear()
     st.rerun()
 
 # ---------------------------------------------------------
-# 5. PROFESYONEL VE TAM DETAYLI WORD FORMU GELİŞTİRİCİ
+# 5. WORD RAPOR / FORM ÜRETİCİ
 # ---------------------------------------------------------
 def _build_docx_table(doc, table_data):
-    """Markdown tablo verisini şık bir Word Tablosuna çevirir."""
     if not table_data:
         return
     rows_cnt = len(table_data)
@@ -165,9 +234,7 @@ def _build_docx_table(doc, table_data):
     doc.add_paragraph("\n")
 
 def create_advanced_sms_docx(work_title, content_text):
-    """SIRE 2.0 / SMS Standartlarında Tablolu Word Dokümanı Hazırlar."""
     doc = DocxDocument()
-    
     for section in doc.sections:
         section.top_margin = Inches(0.6)
         section.bottom_margin = Inches(0.6)
@@ -188,7 +255,7 @@ def create_advanced_sms_docx(work_title, content_text):
     fields = [
         ("Vessel Name:", "M/T "),
         ("IMO No:", ""), 
-        ("Date & Time:", ""),
+        ("Date & Time:", datetime.datetime.now().strftime("%d/%m/%Y %H:%M")),
         ("Location / Tank:", ""),
         ("Work Description:", str(work_title)[:40]),
         ("Permit No:", "RA-2026-"),
@@ -278,7 +345,7 @@ def create_advanced_sms_docx(work_title, content_text):
     return bio
 
 # ---------------------------------------------------------
-# 6. RAG PROMPT VE LLM AYARI
+# 6. RAG PROMPT VE KALICI HAFIZA ENTEGRASYONU
 # ---------------------------------------------------------
 retriever = None
 llm = None
@@ -295,18 +362,13 @@ if openrouter_api_key and vectorstore:
     )
 
     system_prompt = (
-        "Sen Kıdemli bir DPA (Designated Person Ashore), Enspektör ve Deniz Temizliği/Emniyeti Uzmanısın.\n"
-        "GÖREVİN: Kullanıcının talebine göre SMS (Safety Management System) standartlarına tam uyumlu, "
-        "SIRE 2.0 ve PSC denetimlerinden geçecek kadar DETAYLI, UYGULANABİLİR ve TEKNİK bir Risk Değerlendirmesi / İzin Protokolü üretmek.\n\n"
-        "EĞER BİR RİSK DEĞERLENDİRMESİ / FORM İSTENİYORSA AŞAĞIDAKİ YAPIYI TABLO (MARKDOWN TABLE) FORMATINDA ZORUNLU OLARAK KULLAN:\n\n"
-        "### 1. Operasyon Adımları ve Detaylı Risk Matrisi\n"
-        "Aşağıdaki kolonları içeren bir Markdown Tablosu oluştur:\n"
-        "| No | Operasyon Adımı / Tehlike (Hazard) | Olası Sonuç (Consequence) | İlk Risk (Initial Risk) | Kontrol Önlemleri & Prosedürler (Control Measures) | Nihai Risk (Residual Risk) | Sorumlu Zabit |\n"
-        "|---|---|---|---|---|---|---|\n"
-        "(Her operasyon için en az 4-6 farklı teknik risk adımı ekle)\n\n"
-        "### 2. Zorunlu Kişisel Koruyucu Donanımlar (PPE) ve Özel Ekipmanlar\n\n"
-        "### 3. Acil Durum & Kaçış Prosedürleri (Emergency Protocols)\n\n"
-        "Bağlam Dokümanları:\n{context}"
+        "Sen Kıdemli bir DPA, Enspektör ve Deniz Emniyeti Uzmanısın.\n"
+        "GÖREVİN: Kullanıcının taleplerini yanıtlarken hem verilen SMS Dokümanlarını hem de "
+        "GEÇMİŞ SOHBET HAFIZASINI dikkate alarak tam uyumlu, teknik yanıtlar veya Risk Değerlendirme formları üretmektir.\n\n"
+        "ÖNEMLİ: Geçmiş sohbetlerde kullanıcının belirttiği kişisel bilgiler (adı, rütbesi, gemisi, önceki talepleri veya özel tercihleri) "
+        "varsa bunları aklında tut ve yanıtlarında/formlarında kullan.\n\n"
+        "GÜNCEL GEÇMİŞ SOHBET HAFIZASI:\n{chat_history}\n\n"
+        "SMS BAĞLAM DOKÜMANLARI:\n{context}"
     )
 
     prompt = ChatPromptTemplate.from_messages([
@@ -315,12 +377,13 @@ if openrouter_api_key and vectorstore:
     ])
 
 # ---------------------------------------------------------
-# 7. SOHBET GEÇMİŞİ VE ARAYÜZ (GÜVENLİ VE AÇIK SAYFA RENDER)
+# 7. SOHBET GEÇMİŞİ YÜKLEME VE ARAYÜZ
 # ---------------------------------------------------------
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    # Uygulama açıldığında SQLite veritabanından geçmişi çek
+    st.session_state.messages = load_messages_from_db()
 
-# Geçmiş mesajları render et
+# Geçmiş tüm mesajları ekrana çizdir
 for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -330,32 +393,43 @@ for idx, message in enumerate(st.session_state.messages):
                 data=message["docx_bytes"],
                 file_name=message.get("file_name", "SMS_Risk_Assessment.docx"),
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                key=f"dl_btn_{idx}"
+                key=f"dl_btn_db_{idx}"
             )
 
-if user_input := st.chat_input("Örn: 'Sintine tankı temizliği için detaylı risk değerlendirmesi yap'"):
+# Yeni Mesaj Girdisi
+if user_input := st.chat_input("Mesajınız... (Örn: 'Kaptan benim adım Ahmet, 2. Kaptanam')"):
     if not openrouter_api_key:
         st.error("⚠️ Lütfen sol menüden OpenRouter API anahtarınızı girin.")
     elif not vectorstore:
-        st.error("⚠️ Doküman bulunamadı. Lütfen 'docs' klasörünü kontrol edip indeksi yenileyin.")
+        st.error("⚠️ Doküman bulunamadı. Lütfen 'docs' klasörünü kontrol edin.")
     else:
+        # Kullanıcı mesajını ekran ve veritabanına ekle
         st.session_state.messages.append({"role": "user", "content": user_input})
+        save_message_to_db("user", user_input)
+        
         with st.chat_message("user"):
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            with st.spinner("SMS prosedürleri taranıyor ve denetim matrisi hazırlanıyor..."):
+            with st.spinner("Sohbet hafızası ve SMS prosedürleri inceleniyor..."):
                 try:
+                    # 1. Doküman araması yap
                     relevant_docs = retriever.invoke(user_input)
-                    context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "İlgili SMS dokümanı bulunamadı, genel mevzuata göre hazırlanıyor."
+                    context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "İlgili SMS dokümanı bulunamadı."
                     
-                    formatted_prompt = prompt.format(context=context_text, question=user_input)
+                    # 2. Geçmiş sohbet hafızasını derle (Son 15 mesajı bağlam olarak modele ilet)
+                    recent_history = load_messages_from_db()[-15:]
+                    history_str = "\n".join([f"{m['timestamp']} - {m['role'].upper()}: {m['content']}" for m in recent_history])
+
+                    # 3. Promptu oluştur ve LLM'e gönder
+                    formatted_prompt = prompt.format(context=context_text, chat_history=history_str, question=user_input)
                     llm_response = llm.invoke(formatted_prompt)
                     response_text = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
 
                     if not response_text.strip():
                         response_text = "⚠️ Yapay zeka boş yanıt döndürdü. Lütfen sorgunuzu tekrar iletin."
 
+                    # Kaynakları derle
                     sources = []
                     seen = set()
                     for doc in relevant_docs:
@@ -372,8 +446,9 @@ if user_input := st.chat_input("Örn: 'Sintine tankı temizliği için detaylı 
 
                     st.markdown(final_response)
 
-                    msg_data = {"role": "assistant", "content": final_response}
-
+                    # Word Belgesi Kontrolü
+                    docx_bytes = None
+                    file_name = None
                     keywords = ["form", "risk", "değerlendirme", "permit", "izin", "assessment", "çalışma", "temizlik"]
                     if any(kw in user_input.lower() for kw in keywords):
                         try:
@@ -388,12 +463,17 @@ if user_input := st.chat_input("Örn: 'Sintine tankı temizliği için detaylı 
                                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                                 key=f"dl_btn_current_{len(st.session_state.messages)}"
                             )
-                            msg_data["docx_bytes"] = docx_bytes
-                            msg_data["file_name"] = file_name
                         except Exception as docx_err:
-                            st.warning(f"⚠️ Word belgesi oluşturulurken bir uyarı alındı, ancak metin çıktısı sağlandı: {str(docx_err)}")
+                            st.warning(f"⚠️ Word formu oluşturulurken bir uyarı alındı: {str(docx_err)}")
 
-                    st.session_state.messages.append(msg_data)
+                    # Yanıtı veritabanına ve ekran hafızasına kaydet
+                    save_message_to_db("assistant", final_response, docx_bytes, file_name)
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": final_response, 
+                        "docx_bytes": docx_bytes, 
+                        "file_name": file_name
+                    })
 
                 except Exception as e:
                     st.error(f"Yanıt oluşturulurken hata oluştu: {str(e)}")
