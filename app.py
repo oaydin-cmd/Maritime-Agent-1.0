@@ -47,7 +47,8 @@ if uploaded_files and api_key:
         llm = ChatGoogleGenerativeAI(
     model="gemini-1.5-flash",
     google_api_key=api_key,
-    temperature=0.2
+    temperature=0.2,
+    client_options={"google_search_retrieval": True}
         )
 
         system_prompt = (
