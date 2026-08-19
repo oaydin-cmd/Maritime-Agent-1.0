@@ -9,4 +9,6 @@ sentence-transformers
 pytesseract
 pdf2image
 python-docx
+docx2txt
 openpyxl
+textract
