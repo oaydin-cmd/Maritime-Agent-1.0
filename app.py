@@ -4,16 +4,16 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_classic.chains import create_retrieval_chain
-from langchain_classic.chains.combine_documents import create_stuff_documents_chain
+from langchain_openai import ChatOpenAI
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 
 st.set_page_config(page_title="Denizcilik SMS Asistanı", page_icon="🚢")
 st.title("🚢 Denizcilik SMS & Prosedür Asistanı (Bulut Tabanlı)")
 
-# Google API Key Kontrolü
-api_key = st.sidebar.text_input("Google Gemini API Key Giriniz", type="password")
+# API Key Kontrolü
+openrouter_api_key = st.sidebar.text_input("OpenRouter API Key Giriniz", type="password")
 
 uploaded_files = st.sidebar.file_uploader(
     "Şirket PDF Dokümanlarını Yükleyin", 
@@ -21,7 +21,7 @@ uploaded_files = st.sidebar.file_uploader(
     accept_multiple_files=True
 )
 
-if uploaded_files and api_key:
+if uploaded_files and openrouter_api_key:
     with st.spinner("Dokümanlar bulutta işleniyor..."):
         all_docs = []
         for uploaded_file in uploaded_files:
@@ -43,13 +43,12 @@ if uploaded_files and api_key:
         vectorstore = FAISS.from_documents(splits, embeddings)
         retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-        # Bulut Üzerinde Çalışan Yapay Zeka Modeli
-if openrouter_api_key:
+        # OpenRouter Üzerinden Modellere Bağlantı
         llm = ChatOpenAI(
-        model="google/gemini-flash-1.5",
-        openai_api_key=openrouter_api_key,
-        openai_api_base="https://openrouter.ai/api/v1",
-        temperature=0.2
+            model="google/gemini-flash-1.5",
+            openai_api_key=openrouter_api_key,
+            openai_api_base="https://openrouter.ai/api/v1",
+            temperature=0.2
         )
 
         system_prompt = (
@@ -87,5 +86,6 @@ if openrouter_api_key:
                 st.markdown(response["answer"])
 
         st.session_state.messages.append({"role": "assistant", "content": response["answer"]})
-elif not api_key:
-    st.info("Lütfen sol menüden geçerli bir Google Gemini API anahtarı girin.")
+
+elif not openrouter_api_key:
+    st.info("Lütfen sol menüden geçerli bir OpenRouter API anahtarı girin.")
