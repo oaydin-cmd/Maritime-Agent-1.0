@@ -4,6 +4,7 @@ import subprocess
 import io
 import datetime
 import sqlite3
+import urllib.request
 import streamlit as st
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -36,10 +37,20 @@ INDEX_DIR = "faiss_index"
 DB_PATH = "chat_history.db"
 
 # ---------------------------------------------------------
-# 2. SÜREKLİ VERİTABANI (SQLITE KALICI HAFIZA)
+# 2. İNTERNET ERİŞİM TESTİ
+# ---------------------------------------------------------
+def check_internet_connection():
+    """OpenRouter ve genel internet erişimini test eder."""
+    try:
+        urllib.request.urlopen("https://openrouter.ai", timeout=5)
+        return True, "Erişim Başarılı"
+    except Exception as e:
+        return False, str(e)
+
+# ---------------------------------------------------------
+# 3. SÜREKLİ VERİTABANI (SQLITE KALICI HAFIZA)
 # ---------------------------------------------------------
 def init_db():
-    """Tüm mesajları ve konuşmaları tarih/saat ile kaydeden veritabanı tablosu."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
@@ -56,14 +67,10 @@ def init_db():
     conn.close()
 
 def save_message_to_db(role, content, docx_bytes=None, file_name=None):
-    """Her yazılanı ve söylenen yanıtı anında kaydeder."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    # docx_bytes verisinin bytes türünde olduğundan emin oluyoruz
     binary_data = sqlite3.Binary(docx_bytes) if isinstance(docx_bytes, bytes) else None
-    
     cursor.execute(
         "INSERT INTO messages (timestamp, role, content, docx_blob, file_name) VALUES (?, ?, ?, ?, ?)",
         (now, role, content, binary_data, file_name)
@@ -72,7 +79,6 @@ def save_message_to_db(role, content, docx_bytes=None, file_name=None):
     conn.close()
 
 def load_messages_from_db():
-    """Eski oturumlardan kalan tüm konuşma geçmişini yükler."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT id, timestamp, role, content, docx_blob, file_name FROM messages ORDER BY id ASC")
@@ -87,7 +93,6 @@ def load_messages_from_db():
             "role": row[2],
             "content": row[3]
         }
-        # Yalnızca geçerli bir byte verisi varsa ekle
         if row[4] and isinstance(row[4], (bytes, bytearray)) and len(row[4]) > 0:
             msg["docx_bytes"] = bytes(row[4])
             msg["file_name"] = row[5] or "SMS_Risk_Assessment.docx"
@@ -95,7 +100,6 @@ def load_messages_from_db():
     return messages
 
 def clear_db_history():
-    """Tüm sohbet hafızasını temizlemek istenirse kullanılır."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("DELETE FROM messages")
@@ -105,9 +109,17 @@ def clear_db_history():
 init_db()
 
 # ---------------------------------------------------------
-# 3. SİDEBAR VE API KEY KONTROLÜ
+# 4. SİDEBAR, AYARLAR VE DURUM KONTROLÜ
 # ---------------------------------------------------------
-st.sidebar.header("⚙️ Ayarlar & Hafıza Yönetimi")
+st.sidebar.header("⚙️ Ayarlar & Sistem Durumu")
+
+# Ağ Bağlantısı Kontrolü
+net_ok, net_msg = check_internet_connection()
+if net_ok:
+    st.sidebar.success("🌐 İnternet & OpenRouter Erişimi Aktif")
+else:
+    st.sidebar.error(f"⚠️ İnternet / Bağlantı Sorunu: {net_msg}")
+
 openrouter_api_key = st.secrets.get("OPENROUTER_API_KEY") if "OPENROUTER_API_KEY" in st.secrets else None
 
 if not openrouter_api_key:
@@ -120,7 +132,7 @@ if st.sidebar.button("🗑️ Tüm Sohbet Hafızasını Sıfırla"):
     st.rerun()
 
 # ---------------------------------------------------------
-# 4. EMBEDDINGS VE DOKÜMAN YÜKLEME
+# 5. EMBEDDINGS VE DOKÜMAN YÜKLEME
 # ---------------------------------------------------------
 @st.cache_resource
 def get_embeddings():
@@ -209,7 +221,7 @@ if st.sidebar.button("🔄 SMS Doküman İndeksini Yenile"):
     st.rerun()
 
 # ---------------------------------------------------------
-# 5. WORD RAPOR / FORM ÜRETİCİ
+# 6. WORD RAPOR / FORM ÜRETİCİ
 # ---------------------------------------------------------
 def _build_docx_table(doc, table_data):
     if not table_data:
@@ -350,7 +362,7 @@ def create_advanced_sms_docx(work_title, content_text):
     return bio
 
 # ---------------------------------------------------------
-# 6. RAG PROMPT VE KALICI HAFIZA ENTEGRASYONU
+# 7. RAG PROMPT VE LLM AYARI
 # ---------------------------------------------------------
 retriever = None
 llm = None
@@ -363,6 +375,7 @@ if openrouter_api_key and vectorstore:
         openai_api_key=openrouter_api_key,
         openai_api_base="https://openrouter.ai/api/v1",
         temperature=0.2,
+        request_timeout=45,  # Ağ gecikmeleri için zaman aşımı süresi uzatıldı
         default_headers={"HTTP-Referer": "https://streamlit.io", "X-Title": "Maritime Agent RAG"}
     )
 
@@ -382,17 +395,16 @@ if openrouter_api_key and vectorstore:
     ])
 
 # ---------------------------------------------------------
-# 7. SOHBET GEÇMİŞİ YÜKLEME VE ARAYÜZ (GÜVENLİ RENDER)
+# 8. SOHBET GEÇMİŞİ VE ARAYÜZ
 # ---------------------------------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = load_messages_from_db()
 
-# Geçmiş tüm mesajları ekrana çizdir
+# Geçmiş mesajları render et
 for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
         
-        # GÜVENLİK KONTROLÜ: Sadece veri 'bytes' türündeyse ve içi doluysa indirme butonunu çiz
         docx_data = message.get("docx_bytes")
         if docx_data and isinstance(docx_data, bytes) and len(docx_data) > 0:
             st.download_button(
@@ -404,9 +416,11 @@ for idx, message in enumerate(st.session_state.messages):
             )
 
 # Yeni Mesaj Girdisi
-if user_input := st.chat_input("Mesajınız... (Örn: 'Kaptan benim adım Ahmet, 2. Kaptanam')"):
+if user_input := st.chat_input("Mesajınız... (Örn: 'Sintine tankı temizliği için risk değerlendirmesi yap')"):
     if not openrouter_api_key:
         st.error("⚠️ Lütfen sol menüden OpenRouter API anahtarınızı girin.")
+    elif not net_ok:
+        st.error("❌ Sunucuda internet/ağ bağlantısı yok. Lütfen ağ bağlantınızı veya güvenlik duvarı ayarlarınızı kontrol edin.")
     elif not vectorstore:
         st.error("⚠️ Doküman bulunamadı. Lütfen 'docs' klasörünü kontrol edin.")
     else:
@@ -448,7 +462,6 @@ if user_input := st.chat_input("Mesajınız... (Örn: 'Kaptan benim adım Ahmet,
 
                     st.markdown(final_response)
 
-                    # Word Belgesi Kontrolü
                     docx_bytes = None
                     file_name = None
                     keywords = ["form", "risk", "değerlendirme", "permit", "izin", "assessment", "çalışma", "temizlik"]
@@ -458,7 +471,6 @@ if user_input := st.chat_input("Mesajınız... (Örn: 'Kaptan benim adım Ahmet,
                             docx_bytes = docx_file.getvalue()
                             file_name = f"SMS_RA_{user_input[:15].replace(' ', '_')}.docx"
                             
-                            # GÜVENLİK KONTROLÜ
                             if docx_bytes and isinstance(docx_bytes, bytes):
                                 st.download_button(
                                     label="📥 Denetim Uyumlu Formu Word (.docx) Olarak İndir",
@@ -480,4 +492,4 @@ if user_input := st.chat_input("Mesajınız... (Örn: 'Kaptan benim adım Ahmet,
                     st.session_state.messages.append(msg_obj)
 
                 except Exception as e:
-                    st.error(f"Yanıt oluşturulurken hata oluştu: {str(e)}")
+                    st.error(f"❌ Ağ veya API Yanıt Hatası: {str(e)}")
