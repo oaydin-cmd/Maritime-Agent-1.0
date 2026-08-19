@@ -45,12 +45,12 @@ if uploaded_files and api_key:
 
         # Bulut Üzerinde Çalışan Yapay Zeka Modeli
 if openrouter_api_key:
-    llm = ChatOpenAI(
+        llm = ChatOpenAI(
         model="google/gemini-flash-1.5",
         openai_api_key=openrouter_api_key,
         openai_api_base="https://openrouter.ai/api/v1",
         temperature=0.2
-    )
+        )
 
         system_prompt = (
             "Sen şirket içi belgelere dayalı yanıt veren resmi bir denizcilik ve operasyon asistansın.\n"
