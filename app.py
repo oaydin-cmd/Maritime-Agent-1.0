@@ -45,9 +45,9 @@ if uploaded_files and api_key:
 
         # Bulut Üzerinde Çalışan Yapay Zeka Modeli
         llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
-            google_api_key=api_key,
-            temperature=0.2
+    model="gemini-1.5-flash",
+    google_api_key=api_key,
+    temperature=0.2
         )
 
         system_prompt = (
