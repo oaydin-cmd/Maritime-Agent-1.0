@@ -52,7 +52,7 @@ if uploaded_files and openrouter_api_key:
             vectorstore = FAISS.from_documents(splits, embeddings)
             retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-            # OpenRouter Bağlantısı (Garanti / Test Edilmiş Model ID)
+            # OpenRouter Bağlantısı
             llm = ChatOpenAI(
                 model="openai/gpt-4o-mini",
                 openai_api_key=openrouter_api_key,
@@ -64,10 +64,14 @@ if uploaded_files and openrouter_api_key:
                 }
             )
 
+            # Hem Şirket Dokümanını Hem Genel Bilgiyi Kullanan Prompt
             system_prompt = (
-                "Sen şirket içi belgelere dayalı yanıt veren resmi bir denizcilik ve operasyon asistansın.\n"
-                "Sadece sana sunulan aşağıdaki bağlamı (context) kullanarak soruya cevap ver.\n"
-                "Sorunun cevabı dokümanda yoksa kibarca 'Bu bilgi şirket dokümanlarında bulunmamaktadır.' de.\n\n"
+                "Sen uzman bir denizcilik ve operasyon asistansın.\n"
+                "ÖNCELİKLİ GÖREVİN: Aşağıda verilen şirket dokümanı bağlamını (context) kullanarak yanıt vermek.\n"
+                "EĞER sorunun cevabı şirket dokümanlarında TAM OLARAK yoksa veya eksikse:\n"
+                "1. Önce şirket dokümanlarında geçen ilgili kısımları aktar.\n"
+                "2. Ardından genel denizcilik mevzuatı (IMO, SOLAS, MARPOL, STCW vb.) ve genel bilgi birikimini kullanarak eksik kısımları tamamla.\n"
+                "3. Yanıtında hangi bilgilerin şirket dokümanından, hangi bilgilerin genel denizcilik bilgisinden geldiğini açıkça belirt.\n\n"
                 "Bağlam:\n{context}"
             )
 
@@ -95,7 +99,7 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
 
 # Kullanıcı Etkileşimi
-if user_input := st.chat_input("SMS prosedürü veya formlar hakkında soru sorun..."):
+if user_input := st.chat_input("SMS prosedürü veya genel denizcilik konuları hakkında soru sorun..."):
     if not openrouter_api_key:
         st.error("Lütfen sol menüden OpenRouter API anahtarınızı girin.")
     elif st.session_state.rag_chain is None:
