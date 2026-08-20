@@ -195,16 +195,20 @@ if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
     st.rerun()
 
 # ---------------------------------------------------------
-# 5. OPENROUTER API & MODEL YÖNLENDİRMESİ
+# 5. AKILLI API & MODEL YÖNLENDİRMESİ
 # ---------------------------------------------------------
 retriever = None
 
 if api_key and vectorstore:
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
     if api_key.startswith("sk-or-"):
         api_base = "https://openrouter.ai/api/v1"
-        target_models = ["deepseek/deepseek-chat", "deepseek/deepseek-r1:free", "deepseek/deepseek-chat:free"]
+        target_models = [
+            "google/gemini-2.5-flash",
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "deepseek/deepseek-chat"
+        ]
     else:
         api_base = "https://api.deepseek.com"
         target_models = ["deepseek-chat", "deepseek-reasoner"]
@@ -269,7 +273,7 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
                             openai_api_key=api_key,
                             openai_api_base=api_base,
                             temperature=0.3,
-                            timeout=60,
+                            timeout=15,
                             max_retries=1,
                             default_headers={"HTTP-Referer": "http://localhost:8501", "X-Title": "Maritime Expert Assistant"}
                         )
