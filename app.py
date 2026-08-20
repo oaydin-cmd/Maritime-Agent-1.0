@@ -9,7 +9,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.documents import Document
 
 # Belge Yükleyiciler ve OCR Araçları
@@ -194,7 +195,7 @@ if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
     st.rerun()
 
 # ---------------------------------------------------------
-# 5. AKILLI API & GÜNCEL KESİNTİSİZ MODEL YÖNLENDİRMESİ
+# 5. AKILLI API VE PROMPT YAPISI
 # ---------------------------------------------------------
 retriever = None
 
@@ -203,7 +204,6 @@ if api_key and vectorstore:
 
     if api_key.startswith("sk-or-"):
         api_base = "https://openrouter.ai/api/v1"
-        # OpenRouter'da %100 aktif ve yayında olan en hızlı modeller
         target_models = [
             "google/gemini-2.0-flash-001",
             "meta-llama/llama-3.3-70b-instruct",
@@ -214,17 +214,17 @@ if api_key and vectorstore:
         target_models = ["deepseek-chat", "deepseek-reasoner"]
 
     system_prompt = (
-        "Sen doğal, samimi ve yardımsever bir yapay zeka asistansın. Denizcilik konularında uzmansın ancak her sohbeti zorla denizcilik terimlerine veya prosedürlere bağlama.\n\n"
-        "DAVRANIŞ KURALLARI:\n"
-        "1. Kullanıcı genel sohbet ediyorsa (selamlama, hal hatır sorma, gündelik konular) son derece doğal, samimi ve rahat yanıtlar ver.\n"
-        "2. Sadece kullanıcı spesifik bir teknik soru, kural, SMS veya denizcilik prosedürü sorduğunda ekteki referans doküman bilgilerini kullan.\n"
-        "3. Yanıtlarında asla unvan, imza veya gereksiz resmiyet kullanma.\n\n"
-        "GEÇMİŞ SOHBET HAFIZASI:\n{chat_history}\n\n"
-        "REFERANS DOKÜMAN İÇERİĞİ (Sadece ihtiyaç halinde kullan):\n{context}"
+        "Sen akıllı, zeki ve doğal yanıt veren bir asistansın. Denizcilik/SMS konularında da uzmansın.\n"
+        "KURALLAR:\n"
+        "1. Kullanıcı ne derse ona doğrudan, mantıklı ve insan gibi yanıt ver.\n"
+        "2. Üst üste aynı soruları ('günün nasıl geçiyor', 'iyi misin') sorma. Kullanıcı sövdüğünde veya kısa bir şey yazdığında konuya uygun tepki ver.\n"
+        "3. Sadece kullanıcı spesifik denizcilik/şirket dokümanı sorduğunda aşağıdaki referansı kullan.\n\n"
+        "REFERANS DOKÜMAN:\n{context}"
     )
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
+        MessagesPlaceholder(variable_name="chat_history"),
         ("human", "{question}"),
     ])
 
@@ -257,12 +257,22 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                 if vectorstore and needs_rag:
                     relevant_docs = retriever.invoke(user_input)
                 
-                context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "Doküman araması yapılmadı."
-                
-                recent_history = load_messages_from_db()[-6:]
-                history_str = "\n".join([f"{m['timestamp']} - {m['role'].upper()}: {m['content']}" for m in recent_history])
+                context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "Yok"
 
-                formatted_prompt = prompt.format(context=context_text, chat_history=history_str, question=user_input)
+                # Sohbet geçmişini LangChain mesaj nesnelerine dönüştür
+                history_objs = []
+                raw_history = load_messages_from_db()[:-1] # Son gönderilen hariç geçmiş
+                for m in raw_history[-8:]: # Son 8 mesajı al
+                    if m["role"] == "user":
+                        history_objs.append(HumanMessage(content=m["content"]))
+                    else:
+                        history_objs.append(AIMessage(content=m["content"]))
+
+                formatted_prompt = prompt.format_messages(
+                    context=context_text,
+                    chat_history=history_objs,
+                    question=user_input
+                )
                 
                 llm_response = None
                 last_error = ""
@@ -273,7 +283,7 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                             model=model_name,
                             openai_api_key=api_key,
                             openai_api_base=api_base,
-                            temperature=0.7,
+                            temperature=0.5,
                             timeout=15,
                             max_retries=0,
                             default_headers={"HTTP-Referer": "http://localhost:8501", "X-Title": "Expert Assistant"}
