@@ -185,7 +185,7 @@ def load_or_create_vectorstore():
     vectorstore.save_local(INDEX_DIR)
     return vectorstore
 
-vectorstore = load_or_create_vectorstore()
+vectorstore = load_or_createvectorstore() if 'load_or_createvectorstore' in globals() else load_or_create_vectorstore()
 
 if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
     if os.path.exists(INDEX_DIR):
@@ -204,21 +204,21 @@ if api_key and vectorstore:
     if api_key.startswith("sk-or-"):
         api_base = "https://openrouter.ai/api/v1"
         target_models = [
-            "google/gemini-2.0-flash-lite-preview-02-05:free",
+            "google/gemini-2.0-flash-exp:free",
             "meta-llama/llama-3.3-70b-instruct:free",
-            "deepseek/deepseek-chat:free"
+            "qwen/qwen-2.5-coder-32b-instruct:free",
+            "mistralai/mistral-7b-instruct:free"
         ]
     else:
         api_base = "https://api.deepseek.com"
         target_models = ["deepseek-chat", "deepseek-reasoner"]
 
-    # Esnetilmiş Sistem İstem Metni
     system_prompt = (
-        "Sen doğal, samimi ve yardımsever bir yapay zeka asistansın. Denizcilik konularına uzmansın ancak her sohbeti zorla denizcilik terimlerine veya prosedürlere bağlama.\n\n"
+        "Sen doğal, samimi ve yardımsever bir yapay zeka asistansın. Denizcilik konularında uzmansın ancak her sohbeti zorla denizcilik terimlerine veya prosedürlere bağlama.\n\n"
         "DAVRANIŞ KURALLARI:\n"
-        "1. Kullanıcı genel sohbet ediyorsa (selamlama, hal hatır sorma, gündelik konular) son derece doğal, samimi ve kısa yanıtlar ver.\n"
+        "1. Kullanıcı genel sohbet ediyorsa (selamlama, hal hatır sorma, gündelik konular) son derece doğal, samimi ve rahat yanıtlar ver.\n"
         "2. Sadece kullanıcı spesifik bir teknik soru, kural, SMS veya denizcilik prosedürü sorduğunda ekteki referans doküman bilgilerini kullan.\n"
-        "3. Yanıtlarında asla yapay duran unvanlar, imzalar veya gereksiz resmiyet kullanma.\n\n"
+        "3. Yanıtlarında asla unvan, imza veya gereksiz resmiyet kullanma.\n\n"
         "GEÇMİŞ SOHBET HAFIZASI:\n{chat_history}\n\n"
         "REFERANS DOKÜMAN İÇERİĞİ (Sadece ihtiyaç halinde kullan):\n{context}"
     )
@@ -229,7 +229,7 @@ if api_key and vectorstore:
     ])
 
 # ---------------------------------------------------------
-# 6. SOHBET ARAYÜZÜ VEYA İŞLEME
+# 6. SOHBET ARAYÜZÜ VE İŞLEME
 # ---------------------------------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = load_messages_from_db()
@@ -250,7 +250,6 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
 
         with st.chat_message("assistant"):
             with st.spinner("Yazıyor..."):
-                # Mesajda teknik terim/soru kalıbı yoksa doküman aramasını atla
                 keywords = ["sms", "prosedür", "denetim", "sire", "solas", "marpol", "kural", "form", "checklist", "tanker", "gemi", "güverte", "makine", "isps", "ism"]
                 needs_rag = any(kw in user_input.lower() for kw in keywords)
                 
@@ -275,7 +274,7 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                             openai_api_key=api_key,
                             openai_api_base=api_base,
                             temperature=0.7,
-                            timeout=8,
+                            timeout=15,
                             max_retries=0,
                             default_headers={"HTTP-Referer": "http://localhost:8501", "X-Title": "Expert Assistant"}
                         )
