@@ -205,9 +205,9 @@ if api_key and vectorstore:
     if api_key.startswith("sk-or-"):
         api_base = "https://openrouter.ai/api/v1"
         target_models = [
-            "google/gemini-2.0-flash-lite-preview-02-05:free",
+            "google/gemini-2.5-flash",
             "meta-llama/llama-3.3-70b-instruct:free",
-            "deepseek/deepseek-chat:free"
+            "deepseek/deepseek-chat"
         ]
     else:
         api_base = "https://api.deepseek.com"
@@ -244,6 +244,8 @@ for idx, message in enumerate(st.session_state.messages):
 if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya denetimler hakkında bir soru sorun..."):
     if not api_key:
         st.error("⚠️ `.streamlit/secrets.toml` içinde geçerli bir API Key bulunamadı.")
+    elif not vectorstore:
+        st.error("⚠️ Doküman bulunamadı. Lütfen 'docs' klasörüne PDF ekleyin.")
     else:
         st.session_state.messages.append({"role": "user", "content": user_input})
         save_message_to_db("user", user_input)
@@ -252,17 +254,11 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            with st.spinner("Yanıtlanıyor..."):
-                # Kısa selamlaşma/genel mesajlar için FAISS aramasını atlayarak hızı artırır
-                is_simple_query = len(user_input.strip().split()) <= 3 and user_input.lower().strip() in ["selam", "merhaba", "slm", "günaydın", "iyi günler", "test", "naber"]
+            with st.spinner("İnceleniyor..."):
+                relevant_docs = retriever.invoke(user_input)
+                context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "İlgili SMS dokümanı bulunamadı."
                 
-                relevant_docs = []
-                if vectorstore and not is_simple_query:
-                    relevant_docs = retriever.invoke(user_input)
-                
-                context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "Spesifik doküman araması yapılmadı veya doküman bulunamadı."
-                
-                recent_history = load_messages_from_db()[-6:]
+                recent_history = load_messages_from_db()[-10:]
                 history_str = "\n".join([f"{m['timestamp']} - {m['role'].upper()}: {m['content']}" for m in recent_history])
 
                 formatted_prompt = prompt.format(context=context_text, chat_history=history_str, question=user_input)
@@ -277,8 +273,8 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
                             openai_api_key=api_key,
                             openai_api_base=api_base,
                             temperature=0.3,
-                            timeout=8,
-                            max_retries=0,
+                            timeout=15,
+                            max_retries=1,
                             default_headers={"HTTP-Referer": "http://localhost:8501", "X-Title": "Maritime Expert Assistant"}
                         )
                         llm_response = llm.invoke(formatted_prompt)
@@ -308,4 +304,4 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
                     save_message_to_db("assistant", final_response)
                     st.session_state.messages.append({"role": "assistant", "content": final_response})
                 else:
-                    st.error(f"❌ API Hatası: {last_error if last_error else 'Servis yanıt vermedi.'}\n\nLütfen secrets dosyasındaki API key'inizi kontrol edin.")
+                    st.error(f"❌ API Hatası: {last_error if last_error else 'Servis yanıt vermedi.'}\n\nLütfen secrets dosyasındaki API key'inizi ve hesabınızdaki bakiye/kota durumunu kontrol edin.")
