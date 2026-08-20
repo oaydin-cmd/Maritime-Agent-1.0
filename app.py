@@ -113,26 +113,27 @@ def clear_db_history():
 init_db()
 
 # ---------------------------------------------------------
-# 3. YAN MENÜ, MODEL SEÇİMİ VE AYARLAR
+# 3. YAN MENÜ, ÜCRETSİZ MODEL SEÇİMİ VE AYARLAR
 # ---------------------------------------------------------
 st.sidebar.header("⚙️ Sistem Durumu & Ayarlar")
 net_ok, net_msg = check_internet_connection()
 if net_ok:
     st.sidebar.success("🌐 Yapay Zeka Servisi Aktif")
 
-# Model Seçimi Açılır Menüsü (Gemini & DeepSeek Ücretsiz Seçenekleri)
+# Aktif ve %100 Ücretsiz Modeller
 selected_model_label = st.sidebar.selectbox(
     "🤖 Yapay Zeka Modelini Seçin:",
     [
-        "Google Gemini 2.0 Flash (Ücretsiz & Hızlı)",
-        "DeepSeek R1 (Ücretsiz & Derin Analiz)"
+        "Google Gemini 2.0 Flash (Ücretsiz & En Hızlı)",
+        "Qwen 2.5 72B Instruct (Ücretsiz & Türkçe/Analiz)",
+        "Meta Llama 3.1 8B (Ücretsiz & Hızlı)"
     ]
 )
 
-# Seçilen modele göre OpenRouter model slug tanımı
 MODEL_MAPPING = {
-    "Google Gemini 2.0 Flash (Ücretsiz & Hızlı)": "google/gemini-2.0-flash-lite-preview-02-05:free",
-    "DeepSeek R1 (Ücretsiz & Derin Analiz)": "deepseek/deepseek-r1:free"
+    "Google Gemini 2.0 Flash (Ücretsiz & En Hızlı)": "google/gemini-2.0-flash-lite-preview-02-05:free",
+    "Qwen 2.5 72B Instruct (Ücretsiz & Türkçe/Analiz)": "qwen/qwen-2.5-72b-instruct:free",
+    "Meta Llama 3.1 8B (Ücretsiz & Hızlı)": "meta-llama/llama-3.1-8b-instruct:free"
 }
 selected_model_slug = MODEL_MAPPING[selected_model_label]
 
@@ -242,7 +243,6 @@ llm = None
 if openrouter_api_key and vectorstore:
     retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
 
-    # Seçilen modele göre dinamik LLM oluşturma
     llm = ChatOpenAI(
         model=selected_model_slug,
         openai_api_key=openrouter_api_key,
