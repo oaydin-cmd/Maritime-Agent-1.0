@@ -200,7 +200,7 @@ if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
 retriever = None
 
 if api_key and vectorstore:
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
 
     if api_key.startswith("sk-or-"):
         api_base = "https://openrouter.ai/api/v1"
@@ -217,12 +217,12 @@ if api_key and vectorstore:
 
     system_prompt = (
         f"Bugünün tarihi ve günü: {current_time_str}.\n"
-        "Sen akıllı, zeki ve doğal yanıt veren bir asistansın. Denizcilik/SMS konularında da uzmansın.\n\n"
+        "Sen akıllı, zeki ve doğal yanıt veren bir asistansın. Şirket dokümanları, raporlar ve denizcilik/SMS konularında uzmansın.\n\n"
         "KURALLAR:\n"
         "1. Kullanıcı ne derse ona doğrudan, mantıklı ve insan gibi yanıt ver.\n"
         "2. Tarih, gün veya saat sorulduğunda sana verilen güncel tarih bilgisini kullan.\n"
         "3. Üst üste aynı soruları sorma, kalıp cümleleri tekrarlama.\n"
-        "4. Sadece kullanıcı spesifik denizcilik/şirket dokümanı sorduğunda aşağıdaki referansı kullan.\n\n"
+        "4. 'REFERANS DOKÜMAN' alanında bilgi varsa kullanıcıya 'dokümanlara erişemiyorum' deme; gelen metindeki verileri analiz edip detaylıca raporla.\n\n"
         "REFERANS DOKÜMAN:\n{context}"
     )
 
@@ -254,7 +254,12 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
 
         with st.chat_message("assistant"):
             with st.spinner("Yazıyor..."):
-                keywords = ["sms", "prosedür", "denetim", "sire", "solas", "marpol", "kural", "form", "checklist", "tanker", "gemi", "güverte", "makine", "isps", "ism"]
+                keywords = [
+                    "sms", "prosedür", "denetim", "sire", "solas", "marpol", "kural", "form", 
+                    "checklist", "tanker", "gemi", "güverte", "makine", "isps", "ism", "rapor", 
+                    "manta", "pdf", "docx", "doküman", "belge", "dosya", "incele", "maddeler",
+                    "özet", "analiz", "listele", "raporla", "bulgu", "maddeleri"
+                ]
                 needs_rag = any(kw in user_input.lower() for kw in keywords)
                 
                 relevant_docs = []
@@ -286,7 +291,7 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                             model=model_name,
                             openai_api_key=api_key,
                             openai_api_base=api_base,
-                            temperature=0.5,
+                            temperature=0.4,
                             timeout=15,
                             max_retries=0,
                             default_headers={"HTTP-Referer": "http://localhost:8501", "X-Title": "Expert Assistant"}
