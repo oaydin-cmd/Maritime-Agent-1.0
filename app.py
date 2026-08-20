@@ -27,7 +27,7 @@ os.environ["CURL_CA_BUNDLE"] = ""
 # 1. SAYFA YAPILANDIRMASI VE AĞ KONTROLÜ
 # ---------------------------------------------------------
 st.set_page_config(page_title="Denizcilik SMS & Exper Asistanı", page_icon="⚓", layout="wide")
-st.title("⚓ Denizcilik Teknik & SMS Uzman Asistanı (DeepSeek Powered)")
+st.title("⚓ Denizcilik Teknik & SMS Uzman Asistanı (DeepSeek)")
 
 DOCS_DIR = "docs"
 INDEX_DIR = "faiss_index"
@@ -38,10 +38,10 @@ def check_internet_connection():
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        urllib.request.urlopen("https://openrouter.ai", timeout=5, context=ctx)
-        return True, "Yapay zeka servisine erişim başarılı."
+        urllib.request.urlopen("https://api.deepseek.com", timeout=5, context=ctx)
+        return True, "Erişim başarılı."
     except Exception as e:
-        return True, f"Ağ uyarısı: {str(e)}"
+        return False, f"Ağ uyarısı: {str(e)}"
 
 # ---------------------------------------------------------
 # 2. SQLITE VERİTABANI (KALICI SOHBET HAFIZASI)
@@ -105,22 +105,25 @@ def clear_db_history():
 init_db()
 
 # ---------------------------------------------------------
-# 3. YAN MENÜ VE API KEY AYARLARI
+# 3. YALIN SOL MENÜ VE SECRETS KONTROLÜ
 # ---------------------------------------------------------
-st.sidebar.header("⚙️ Sistem Durumu & Hafıza")
+st.sidebar.header("⚙️ Sistem Durumu")
+
 net_ok, net_msg = check_internet_connection()
 if net_ok:
-    st.sidebar.success("🌐 DeepSeek Servisi Aktif")
+    st.sidebar.success("🌐 İnternet Bağlantısı Aktif")
+else:
+    st.sidebar.warning(f"⚠️ Bağlantı Sorunu: {net_msg}")
 
-api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
-if not api_key:
-    try:
-        api_key = st.secrets.get("OPENROUTER_API_KEY") or st.secrets.get("DEEPSEEK_API_KEY")
-    except Exception:
-        pass
+api_key = st.secrets.get("DEEPSEEK_API_KEY") or st.secrets.get("OPENROUTER_API_KEY") or os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENROUTER_API_KEY")
 
-if not api_key:
-    api_key = st.sidebar.text_input("OpenRouter / DeepSeek API Key", type="password")
+if api_key:
+    st.sidebar.success("🔑 API Key Tanımlı (Secrets)")
+else:
+    st.sidebar.error("❌ API Key Bulunamadı! Lütfen `.streamlit/secrets.toml` dosyanızı kontrol edin.")
+
+st.sidebar.markdown("---")
+st.sidebar.header("🧠 Hafıza Yönetimi")
 
 if st.sidebar.button("🗑️ Tüm Sohbet Hafızasını Sıfırla"):
     clear_db_history()
@@ -201,7 +204,7 @@ def load_or_create_vectorstore():
     vectorstore.save_local(INDEX_DIR)
     return vectorstore
 
-vectorstore = load_or_create_vectorstore()
+vectorstore = load_or_createvectorstore()
 
 if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
     if os.path.exists(INDEX_DIR):
@@ -210,20 +213,20 @@ if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
     st.rerun()
 
 # ---------------------------------------------------------
-# 5. DEEPSEEK MODEL YAPILANDIRMASI VE PROMPT
+# 5. AKILLI API & MODEL YÖNLENDİRMESİ
 # ---------------------------------------------------------
 retriever = None
 
-# DeepSeek modellerinin OpenRouter üzerindeki öncelik sırası
-DEEPSEEK_MODELS = [
-    "deepseek/deepseek-r1:free",
-    "deepseek/deepseek-chat:free",
-    "deepseek/deepseek-r1",
-    "deepseek/deepseek-chat"
-]
-
 if api_key and vectorstore:
     retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
+
+    # Anahtar türünü kontrol et: OpenRouter tuşu mu yoksa Resmi DeepSeek tuşu mu?
+    if api_key.startswith("sk-or-"):
+        api_base = "https://openrouter.ai/api/v1"
+        target_models = ["deepseek/deepseek-chat", "deepseek/deepseek-r1:free", "deepseek/deepseek-chat:free"]
+    else:
+        api_base = "https://api.deepseek.com"
+        target_models = ["deepseek-chat", "deepseek-reasoner"]
 
     system_prompt = (
         "Sen uzun yıllar ocean-going gemilerde Süvari/Başmühendis olarak görev yapmış, şu an ise Kıdemli DPA, "
@@ -256,7 +259,7 @@ for idx, message in enumerate(st.session_state.messages):
 
 if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya denetimler hakkında bir soru sorun..."):
     if not api_key:
-        st.error("⚠️ Lütfen sol menüden API anahtarınızı girin.")
+        st.error("⚠️ `.streamlit/secrets.toml` içinde geçerli bir API Key bulunamadı.")
     elif not vectorstore:
         st.error("⚠️ Doküman bulunamadı. Lütfen 'docs' klasörüne PDF ekleyin.")
     else:
@@ -267,7 +270,7 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            with st.spinner("DeepSeek SMS prosedürlerini ve denizcilik verilerini analiz ediyor..."):
+            with st.spinner("DeepSeek SMS dokümanlarını ve denizcilik prosedürlerini inceliyor..."):
                 relevant_docs = retriever.invoke(user_input)
                 context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "İlgili SMS dokümanı bulunamadı."
                 
@@ -277,14 +280,14 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
                 formatted_prompt = prompt.format(context=context_text, chat_history=history_str, question=user_input)
                 
                 llm_response = None
+                last_error = ""
 
-                # DeepSeek Endpoint'leri sırayla denenir
-                for model_name in DEEPSEEK_MODELS:
+                for model_name in target_models:
                     try:
                         llm = ChatOpenAI(
                             model=model_name,
                             openai_api_key=api_key,
-                            openai_api_base="https://openrouter.ai/api/v1",
+                            openai_api_base=api_base,
                             temperature=0.3,
                             timeout=60,
                             max_retries=1,
@@ -292,7 +295,8 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
                         )
                         llm_response = llm.invoke(formatted_prompt)
                         break
-                    except Exception:
+                    except Exception as err:
+                        last_error = str(err)
                         continue
 
                 if llm_response:
@@ -316,4 +320,4 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
                     save_message_to_db("assistant", final_response)
                     st.session_state.messages.append({"role": "assistant", "content": final_response})
                 else:
-                    st.error("❌ DeepSeek servislerine şu an erişilemiyor. Lütfen API anahtarınızı veya bağlantınızı kontrol edin.")
+                    st.error(f"❌ API Hatası: {last_error if last_error else 'Servis yanıt vermedi.'}\n\nLütfen secrets dosyasındaki API key'inizi ve hesabınızdaki bakiye/kota durumunu kontrol edin.")
