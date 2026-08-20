@@ -118,7 +118,7 @@ init_db()
 st.sidebar.header("⚙️ Sistem Durumu & Hafıza")
 net_ok, net_msg = check_internet_connection()
 if net_ok:
-    st.sidebar.success("🌐 Yapay Zeka Servisi Aktif (Ücretsiz Gemini)")
+    st.sidebar.success("🌐 Yapay Zeka Servisi Aktif")
 
 openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
 if not openrouter_api_key:
@@ -218,24 +218,19 @@ if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
     st.rerun()
 
 # ---------------------------------------------------------
-# 5. GEÇERLİ ÜCRETSİZ MODEL VE EXPERT PROMPTU
+# 5. YEDEKLİ MODEL YÖNETİMİ VE PROMPT
 # ---------------------------------------------------------
 retriever = None
-llm = None
+
+# OpenRouter üzerindeki en stabil ücretsiz model sıralaması
+FREE_MODELS = [
+    "qwen/qwen-2.5-72b-instruct:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
+    "mistralai/mistral-7b-instruct:free"
+]
 
 if openrouter_api_key and vectorstore:
     retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
-
-    # OpenRouter Üzerinde Aktif Olan Ücretsiz Model ID
-    llm = ChatOpenAI(
-        model="google/gemini-2.0-flash-exp:free",
-        openai_api_key=openrouter_api_key,
-        openai_api_base="https://openrouter.ai/api/v1",
-        temperature=0.3,
-        timeout=60,
-        max_retries=3,
-        default_headers={"HTTP-Referer": "http://localhost:8501", "X-Title": "Maritime Expert Assistant"}
-    )
 
     system_prompt = (
         "Sen uzun yıllar ocean-going gemilerde Süvari/Başmühendis olarak görev yapmış, şu an ise Kıdemli DPA, "
@@ -257,7 +252,7 @@ if openrouter_api_key and vectorstore:
     ])
 
 # ---------------------------------------------------------
-# 6. SOHBET ARAYÜZÜ VE İŞLEME
+# 6. SOHBET ARAYÜZÜ VE YEDEKLİ YANIT ÜRETİMİ
 # ---------------------------------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = load_messages_from_db()
@@ -280,15 +275,36 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
 
         with st.chat_message("assistant"):
             with st.spinner("SMS prosedürleri ve denizcilik tecrübesi harmanlanıyor..."):
-                try:
-                    relevant_docs = retriever.invoke(user_input)
-                    context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "İlgili SMS dokümanı bulunamadı."
-                    
-                    recent_history = load_messages_from_db()[-10:]
-                    history_str = "\n".join([f"{m['timestamp']} - {m['role'].upper()}: {m['content']}" for m in recent_history])
+                relevant_docs = retriever.invoke(user_input)
+                context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "İlgili SMS dokümanı bulunamadı."
+                
+                recent_history = load_messages_from_db()[-10:]
+                history_str = "\n".join([f"{m['timestamp']} - {m['role'].upper()}: {m['content']}" for m in recent_history])
 
-                    formatted_prompt = prompt.format(context=context_text, chat_history=history_str, question=user_input)
-                    llm_response = llm.invoke(formatted_prompt)
+                formatted_prompt = prompt.format(context=context_text, chat_history=history_str, question=user_input)
+                
+                llm_response = None
+                successful_model = None
+
+                # Ücretsiz modeller sırayla denenir (biri 404/400 verirse diğerine geçer)
+                for model_slug in FREE_MODELS:
+                    try:
+                        llm = ChatOpenAI(
+                            model=model_slug,
+                            openai_api_key=openrouter_api_key,
+                            openai_api_base="https://openrouter.ai/api/v1",
+                            temperature=0.3,
+                            timeout=45,
+                            max_retries=1,
+                            default_headers={"HTTP-Referer": "http://localhost:8501", "X-Title": "Maritime Expert Assistant"}
+                        )
+                        llm_response = llm.invoke(formatted_prompt)
+                        successful_model = model_slug
+                        break
+                    except Exception:
+                        continue
+
+                if llm_response:
                     response_text = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
 
                     sources = []
@@ -306,9 +322,7 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
                         final_response += "\n\n---\n**İncelediğim Şirket Dokümanları:**\n" + "\n".join([f"- {src}" for src in sources])
 
                     st.markdown(final_response)
-
                     save_message_to_db("assistant", final_response)
                     st.session_state.messages.append({"role": "assistant", "content": final_response})
-
-                except Exception as e:
-                    st.error(f"❌ Yanıt oluşturulurken hata: {str(e)}")
+                else:
+                    st.error("❌ Ücretsiz OpenRouter modelleri şu an yoğun veya servis dışı. Lütfen birkaç dakika sonra tekrar deneyin.")
