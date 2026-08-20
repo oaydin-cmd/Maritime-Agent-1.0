@@ -185,7 +185,7 @@ def load_or_create_vectorstore():
     vectorstore.save_local(INDEX_DIR)
     return vectorstore
 
-vectorstore = load_or_createvectorstore() if 'load_or_createvectorstore' in globals() else load_or_create_vectorstore()
+vectorstore = load_or_create_vectorstore()
 
 if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
     if os.path.exists(INDEX_DIR):
@@ -194,7 +194,7 @@ if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
     st.rerun()
 
 # ---------------------------------------------------------
-# 5. AKILLI API & ESNEK İSTEM YÖNLENDİRMESİ
+# 5. AKILLI API & GÜNCEL KESİNTİSİZ MODEL YÖNLENDİRMESİ
 # ---------------------------------------------------------
 retriever = None
 
@@ -203,11 +203,11 @@ if api_key and vectorstore:
 
     if api_key.startswith("sk-or-"):
         api_base = "https://openrouter.ai/api/v1"
+        # OpenRouter'da %100 aktif ve yayında olan en hızlı modeller
         target_models = [
-            "google/gemini-2.0-flash-exp:free",
-            "meta-llama/llama-3.3-70b-instruct:free",
-            "qwen/qwen-2.5-coder-32b-instruct:free",
-            "mistralai/mistral-7b-instruct:free"
+            "google/gemini-2.0-flash-001",
+            "meta-llama/llama-3.3-70b-instruct",
+            "deepseek/deepseek-chat"
         ]
     else:
         api_base = "https://api.deepseek.com"
