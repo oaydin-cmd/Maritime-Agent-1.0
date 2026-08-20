@@ -218,7 +218,7 @@ if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
     st.rerun()
 
 # ---------------------------------------------------------
-# 5. SABİT ÜCRETSİZ MODEL (GEMINI 2.0 FLASH) VE EXPERT PROMPTU
+# 5. GEÇERLİ ÜCRETSİZ MODEL VE EXPERT PROMPTU
 # ---------------------------------------------------------
 retriever = None
 llm = None
@@ -226,9 +226,9 @@ llm = None
 if openrouter_api_key and vectorstore:
     retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
 
-    # OpenRouter Üzerindeki Güncel Ücretsiz Model
+    # OpenRouter Üzerinde Aktif Olan Ücretsiz Model ID
     llm = ChatOpenAI(
-        model="google/gemini-2.0-flash-lite-preview-02-05:free",
+        model="google/gemini-2.0-flash-exp:free",
         openai_api_key=openrouter_api_key,
         openai_api_base="https://openrouter.ai/api/v1",
         temperature=0.3,
