@@ -113,12 +113,28 @@ def clear_db_history():
 init_db()
 
 # ---------------------------------------------------------
-# 3. YAN MENÜ VE AYARLAR
+# 3. YAN MENÜ, MODEL SEÇİMİ VE AYARLAR
 # ---------------------------------------------------------
-st.sidebar.header("⚙️ Sistem Durumu & Hafıza")
+st.sidebar.header("⚙️ Sistem Durumu & Ayarlar")
 net_ok, net_msg = check_internet_connection()
 if net_ok:
     st.sidebar.success("🌐 Yapay Zeka Servisi Aktif")
+
+# Model Seçimi Açılır Menüsü (Gemini & DeepSeek Ücretsiz Seçenekleri)
+selected_model_label = st.sidebar.selectbox(
+    "🤖 Yapay Zeka Modelini Seçin:",
+    [
+        "Google Gemini 2.0 Flash (Ücretsiz & Hızlı)",
+        "DeepSeek R1 (Ücretsiz & Derin Analiz)"
+    ]
+)
+
+# Seçilen modele göre OpenRouter model slug tanımı
+MODEL_MAPPING = {
+    "Google Gemini 2.0 Flash (Ücretsiz & Hızlı)": "google/gemini-2.0-flash-lite-preview-02-05:free",
+    "DeepSeek R1 (Ücretsiz & Derin Analiz)": "deepseek/deepseek-r1:free"
+}
+selected_model_slug = MODEL_MAPPING[selected_model_label]
 
 openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
 if not openrouter_api_key:
@@ -218,7 +234,7 @@ if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
     st.rerun()
 
 # ---------------------------------------------------------
-# 5. ÜCRETSİZ LLM VE DENİZCİLİK EXPERT PROMPTU
+# 5. DİNAMİK LLM VE DENİZCİLİK EXPERT PROMPTU
 # ---------------------------------------------------------
 retriever = None
 llm = None
@@ -226,9 +242,9 @@ llm = None
 if openrouter_api_key and vectorstore:
     retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
 
-    # OpenRouter Ücretsiz Model Seçimi
+    # Seçilen modele göre dinamik LLM oluşturma
     llm = ChatOpenAI(
-        model="meta-llama/llama-3.3-70b-instruct:free",
+        model=selected_model_slug,
         openai_api_key=openrouter_api_key,
         openai_api_base="https://openrouter.ai/api/v1",
         temperature=0.3,
@@ -257,7 +273,7 @@ if openrouter_api_key and vectorstore:
     ])
 
 # ---------------------------------------------------------
-# 6. SOHBET ARAYÜZÜ VEYA İŞLEME
+# 6. SOHBET ARAYÜZÜ VE İŞLEME
 # ---------------------------------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = load_messages_from_db()
@@ -279,7 +295,7 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            with st.spinner("SMS prosedürleri ve denizcilik tecrübesi harmanlanıyor..."):
+            with st.spinner(f"[{selected_model_label}] SMS prosedürleri ve denizcilik tecrübesi harmanlanıyor..."):
                 try:
                     relevant_docs = retriever.invoke(user_input)
                     context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "İlgili SMS dokümanı bulunamadı."
