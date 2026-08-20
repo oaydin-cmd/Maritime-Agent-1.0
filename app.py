@@ -3,8 +3,6 @@ import shutil
 import io
 import datetime
 import sqlite3
-import urllib.request
-import ssl
 import streamlit as st
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -24,24 +22,14 @@ import docx
 os.environ["CURL_CA_BUNDLE"] = ""
 
 # ---------------------------------------------------------
-# 1. SAYFA YAPILANDIRMASI VE AĞ KONTROLÜ
+# 1. SAYFA YAPILANDIRMASI
 # ---------------------------------------------------------
 st.set_page_config(page_title="Denizcilik SMS & Exper Asistanı", page_icon="⚓", layout="wide")
-st.title("⚓ Denizcilik Teknik & SMS Uzman Asistanı (DeepSeek)")
+st.title("⚓ Denizcilik Teknik & SMS Uzman Asistanı")
 
 DOCS_DIR = "docs"
 INDEX_DIR = "faiss_index"
 DB_PATH = "chat_history.db"
-
-def check_internet_connection():
-    try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        urllib.request.urlopen("https://api.deepseek.com", timeout=5, context=ctx)
-        return True, "Erişim başarılı."
-    except Exception as e:
-        return False, f"Ağ uyarısı: {str(e)}"
 
 # ---------------------------------------------------------
 # 2. SQLITE VERİTABANI (KALICI SOHBET HAFIZASI)
@@ -105,20 +93,14 @@ def clear_db_history():
 init_db()
 
 # ---------------------------------------------------------
-# 3. YALIN SOL MENÜ VE SECRETS KONTROLÜ
+# 3. YALIN SOL MENÜ
 # ---------------------------------------------------------
-st.sidebar.header("⚙️ Sistem Durumu")
+st.sidebar.header("⚙️ Sistem Ayarları")
 
-net_ok, net_msg = check_internet_connection()
-if net_ok:
-    st.sidebar.success("🌐 İnternet Bağlantısı Aktif")
-else:
-    st.sidebar.warning(f"⚠️ Bağlantı Sorunu: {net_msg}")
-
-api_key = st.secrets.get("DEEPSEEK_API_KEY") or st.secrets.get("OPENROUTER_API_KEY") or os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+api_key = st.secrets.get("OPENROUTER_API_KEY") or st.secrets.get("DEEPSEEK_API_KEY") or os.getenv("OPENROUTER_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
 
 if api_key:
-    st.sidebar.success("🔑 API Key Tanımlı (Secrets)")
+    st.sidebar.success("🔑 API Key Tanımlı")
 else:
     st.sidebar.error("❌ API Key Bulunamadı! Lütfen `.streamlit/secrets.toml` dosyanızı kontrol edin.")
 
@@ -213,7 +195,7 @@ if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
     st.rerun()
 
 # ---------------------------------------------------------
-# 5. AKILLI API & MODEL YÖNLENDİRMESİ
+# 5. OPENROUTER API & MODEL YÖNLENDİRMESİ
 # ---------------------------------------------------------
 retriever = None
 
@@ -228,15 +210,14 @@ if api_key and vectorstore:
         target_models = ["deepseek-chat", "deepseek-reasoner"]
 
     system_prompt = (
-        "Sen uzun yıllar ocean-going gemilerde Süvari/Başmühendis olarak görev yapmış, şu an ise Kıdemli DPA, "
-        "SIRE 2.0 Enspektörü ve Deniz Emniyeti Uzmanısın.\n\n"
+        "Sen denizcilik, SMS prosedürleri ve teknik gemi operasyonları konusunda uzman bir asistansın.\n\n"
         "YAKLAŞIMIN VE MİSYONUN:\n"
         "1. BİREBİR ALINTI YAPMA: Verilen SMS ve teknik dokümanlardaki metinleri kopyala-yapıştır yapma! "
-        "Bilgiyi özümse, kendi mesleki tecrübenle harmanla ve bir deniz uzmanı gibi pratik, sektörel bir dille açıkla.\n"
-        "2. OPERASYONEL YORUM EKLE: Kuralın veya prosedürün sadece ne olduğunu değil; Neden önemli olduğunu, "
-        "güvertede/makinede uygularken yapılan tipik hataları ve bir PSC/SIRE denetiminde enspektörün burayı nasıl sorgulayacağını belirt.\n"
-        "3. PRATİK TAVSİYE VER: Kullanıcıya sadece teorik bilgi sunma, vardiya zabitinin veya çarkçının sahada uygulayabileceği somut adımlar öner.\n"
-        "4. KİŞİSEL HAFIZAYI KULLAN: Kullanıcının daha önceki mesajlarda bahsettiği gemi tipi, rütbesi veya özel durumlarını yanıtlarda dikkate al.\n\n"
+        "Bilgiyi özümse, mesleki tecrübeyle harmanla ve pratik, sektörel bir dille açıkla.\n"
+        "2. OPERASYONEL YORUM EKLE: Prosedürün sadece ne olduğunu değil; Neden önemli olduğunu, "
+        "uygularken yapılan tipik hataları ve denetimlerde nasıl sorgulandığını belirt.\n"
+        "3. PRATİK TAVSİYE VER: Sahada uygulanabilecek somut adımlar öner.\n"
+        "4. KENDİNİ TANITMA VEYA İMZA ATMA: Yanıtlarının sonuna veya başına 'Kıdemli DPA', 'SIRE Enspektörü' veya benzeri unvanlar, imzalar ekleme. Doğrudan soruya ve çözüme odaklan.\n\n"
         "GEÇMİŞ SOHBET HAFIZASI:\n{chat_history}\n\n"
         "REFERANS SMS VE TEKNİK DOKÜMAN İÇERİĞİ:\n{context}"
     )
@@ -269,7 +250,7 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            with st.spinner("DeepSeek SMS dokümanlarını ve denizcilik prosedürlerini inceliyor..."):
+            with st.spinner("İnceleniyor..."):
                 relevant_docs = retriever.invoke(user_input)
                 context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "İlgili SMS dokümanı bulunamadı."
                 
