@@ -195,7 +195,7 @@ if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
     st.rerun()
 
 # ---------------------------------------------------------
-# 5. AKILLI API VE PROMPT YAPISI
+# 5. AKILLI API VE DINAMIK PROMPT YAPISI
 # ---------------------------------------------------------
 retriever = None
 
@@ -213,12 +213,16 @@ if api_key and vectorstore:
         api_base = "https://api.deepseek.com"
         target_models = ["deepseek-chat", "deepseek-reasoner"]
 
+    current_time_str = datetime.datetime.now().strftime("%d.%m.%Y, %A")
+
     system_prompt = (
-        "Sen akıllı, zeki ve doğal yanıt veren bir asistansın. Denizcilik/SMS konularında da uzmansın.\n"
+        f"Bugünün tarihi ve günü: {current_time_str}.\n"
+        "Sen akıllı, zeki ve doğal yanıt veren bir asistansın. Denizcilik/SMS konularında da uzmansın.\n\n"
         "KURALLAR:\n"
         "1. Kullanıcı ne derse ona doğrudan, mantıklı ve insan gibi yanıt ver.\n"
-        "2. Üst üste aynı soruları ('günün nasıl geçiyor', 'iyi misin') sorma. Kullanıcı sövdüğünde veya kısa bir şey yazdığında konuya uygun tepki ver.\n"
-        "3. Sadece kullanıcı spesifik denizcilik/şirket dokümanı sorduğunda aşağıdaki referansı kullan.\n\n"
+        "2. Tarih, gün veya saat sorulduğunda sana verilen güncel tarih bilgisini kullan.\n"
+        "3. Üst üste aynı soruları sorma, kalıp cümleleri tekrarlama.\n"
+        "4. Sadece kullanıcı spesifik denizcilik/şirket dokümanı sorduğunda aşağıdaki referansı kullan.\n\n"
         "REFERANS DOKÜMAN:\n{context}"
     )
 
@@ -259,10 +263,9 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                 
                 context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "Yok"
 
-                # Sohbet geçmişini LangChain mesaj nesnelerine dönüştür
                 history_objs = []
-                raw_history = load_messages_from_db()[:-1] # Son gönderilen hariç geçmiş
-                for m in raw_history[-8:]: # Son 8 mesajı al
+                raw_history = load_messages_from_db()[:-1]
+                for m in raw_history[-8:]:
                     if m["role"] == "user":
                         history_objs.append(HumanMessage(content=m["content"]))
                     else:
