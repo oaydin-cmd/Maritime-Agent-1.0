@@ -1,6 +1,5 @@
 import os
 import shutil
-import subprocess
 import io
 import datetime
 import sqlite3
@@ -20,12 +19,6 @@ from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, Un
 from pdf2image import convert_from_path
 import pytesseract
 import docx
-from docx import Document as DocxDocument
-from docx.shared import Inches, Pt, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
 
 # SSL sertifika kısıtlamaları olan ağlarda bağlantı engellerini esnetir
 os.environ["CURL_CA_BUNDLE"] = ""
@@ -34,14 +27,13 @@ os.environ["CURL_CA_BUNDLE"] = ""
 # 1. SAYFA YAPILANDIRMASI VE AĞ KONTROLÜ
 # ---------------------------------------------------------
 st.set_page_config(page_title="Denizcilik SMS & Exper Asistanı", page_icon="⚓", layout="wide")
-st.title("⚓ Denizcilik Teknik & SMS Uzman Asistanı")
+st.title("⚓ Denizcilik Teknik & SMS Uzman Asistanı (DeepSeek Powered)")
 
 DOCS_DIR = "docs"
 INDEX_DIR = "faiss_index"
 DB_PATH = "chat_history.db"
 
 def check_internet_connection():
-    """Ağ kısıtlaması olsa dahi uygulamanın durmasını engeller."""
     try:
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
@@ -49,7 +41,7 @@ def check_internet_connection():
         urllib.request.urlopen("https://openrouter.ai", timeout=5, context=ctx)
         return True, "Yapay zeka servisine erişim başarılı."
     except Exception as e:
-        return True, f"Ağ uyarısı (Yapay zekaya erişim deneniyor): {str(e)}"
+        return True, f"Ağ uyarısı: {str(e)}"
 
 # ---------------------------------------------------------
 # 2. SQLITE VERİTABANI (KALICI SOHBET HAFIZASI)
@@ -113,22 +105,22 @@ def clear_db_history():
 init_db()
 
 # ---------------------------------------------------------
-# 3. YAN MENÜ VE AYARLAR
+# 3. YAN MENÜ VE API KEY AYARLARI
 # ---------------------------------------------------------
 st.sidebar.header("⚙️ Sistem Durumu & Hafıza")
 net_ok, net_msg = check_internet_connection()
 if net_ok:
-    st.sidebar.success("🌐 Yapay Zeka Servisi Aktif")
+    st.sidebar.success("🌐 DeepSeek Servisi Aktif")
 
-openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
-if not openrouter_api_key:
+api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
+if not api_key:
     try:
-        openrouter_api_key = st.secrets.get("OPENROUTER_API_KEY")
+        api_key = st.secrets.get("OPENROUTER_API_KEY") or st.secrets.get("DEEPSEEK_API_KEY")
     except Exception:
         pass
 
-if not openrouter_api_key:
-    openrouter_api_key = st.sidebar.text_input("OpenRouter API Key", type="password")
+if not api_key:
+    api_key = st.sidebar.text_input("OpenRouter / DeepSeek API Key", type="password")
 
 if st.sidebar.button("🗑️ Tüm Sohbet Hafızasını Sıfırla"):
     clear_db_history()
@@ -218,18 +210,19 @@ if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
     st.rerun()
 
 # ---------------------------------------------------------
-# 5. YEDEKLİ MODEL YÖNETİMİ VE PROMPT
+# 5. DEEPSEEK MODEL YAPILANDIRMASI VE PROMPT
 # ---------------------------------------------------------
 retriever = None
 
-# OpenRouter üzerindeki en stabil ücretsiz model sıralaması
-FREE_MODELS = [
-    "qwen/qwen-2.5-72b-instruct:free",
-    "meta-llama/llama-3.1-8b-instruct:free",
-    "mistralai/mistral-7b-instruct:free"
+# DeepSeek modellerinin OpenRouter üzerindeki öncelik sırası
+DEEPSEEK_MODELS = [
+    "deepseek/deepseek-r1:free",
+    "deepseek/deepseek-chat:free",
+    "deepseek/deepseek-r1",
+    "deepseek/deepseek-chat"
 ]
 
-if openrouter_api_key and vectorstore:
+if api_key and vectorstore:
     retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
 
     system_prompt = (
@@ -252,7 +245,7 @@ if openrouter_api_key and vectorstore:
     ])
 
 # ---------------------------------------------------------
-# 6. SOHBET ARAYÜZÜ VE YEDEKLİ YANIT ÜRETİMİ
+# 6. SOHBET ARAYÜZÜ VE İŞLEME
 # ---------------------------------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = load_messages_from_db()
@@ -262,8 +255,8 @@ for idx, message in enumerate(st.session_state.messages):
         st.markdown(message["content"])
 
 if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya denetimler hakkında bir soru sorun..."):
-    if not openrouter_api_key:
-        st.error("⚠️ Lütfen geçerli bir OpenRouter API anahtarı girin.")
+    if not api_key:
+        st.error("⚠️ Lütfen sol menüden API anahtarınızı girin.")
     elif not vectorstore:
         st.error("⚠️ Doküman bulunamadı. Lütfen 'docs' klasörüne PDF ekleyin.")
     else:
@@ -274,7 +267,7 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            with st.spinner("SMS prosedürleri ve denizcilik tecrübesi harmanlanıyor..."):
+            with st.spinner("DeepSeek SMS prosedürlerini ve denizcilik verilerini analiz ediyor..."):
                 relevant_docs = retriever.invoke(user_input)
                 context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "İlgili SMS dokümanı bulunamadı."
                 
@@ -284,22 +277,20 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
                 formatted_prompt = prompt.format(context=context_text, chat_history=history_str, question=user_input)
                 
                 llm_response = None
-                successful_model = None
 
-                # Ücretsiz modeller sırayla denenir (biri 404/400 verirse diğerine geçer)
-                for model_slug in FREE_MODELS:
+                # DeepSeek Endpoint'leri sırayla denenir
+                for model_name in DEEPSEEK_MODELS:
                     try:
                         llm = ChatOpenAI(
-                            model=model_slug,
-                            openai_api_key=openrouter_api_key,
+                            model=model_name,
+                            openai_api_key=api_key,
                             openai_api_base="https://openrouter.ai/api/v1",
                             temperature=0.3,
-                            timeout=45,
+                            timeout=60,
                             max_retries=1,
                             default_headers={"HTTP-Referer": "http://localhost:8501", "X-Title": "Maritime Expert Assistant"}
                         )
                         llm_response = llm.invoke(formatted_prompt)
-                        successful_model = model_slug
                         break
                     except Exception:
                         continue
@@ -325,4 +316,4 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
                     save_message_to_db("assistant", final_response)
                     st.session_state.messages.append({"role": "assistant", "content": final_response})
                 else:
-                    st.error("❌ Ücretsiz OpenRouter modelleri şu an yoğun veya servis dışı. Lütfen birkaç dakika sonra tekrar deneyin.")
+                    st.error("❌ DeepSeek servislerine şu an erişilemiyor. Lütfen API anahtarınızı veya bağlantınızı kontrol edin.")
