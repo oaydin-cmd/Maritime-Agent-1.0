@@ -113,29 +113,12 @@ def clear_db_history():
 init_db()
 
 # ---------------------------------------------------------
-# 3. YAN MENÜ, ÜCRETSİZ MODEL SEÇİMİ VE AYARLAR
+# 3. YAN MENÜ VE AYARLAR
 # ---------------------------------------------------------
-st.sidebar.header("⚙️ Sistem Durumu & Ayarlar")
+st.sidebar.header("⚙️ Sistem Durumu & Hafıza")
 net_ok, net_msg = check_internet_connection()
 if net_ok:
-    st.sidebar.success("🌐 Yapay Zeka Servisi Aktif")
-
-# Aktif ve %100 Ücretsiz Modeller
-selected_model_label = st.sidebar.selectbox(
-    "🤖 Yapay Zeka Modelini Seçin:",
-    [
-        "Google Gemini 2.0 Flash (Ücretsiz & En Hızlı)",
-        "Qwen 2.5 72B Instruct (Ücretsiz & Türkçe/Analiz)",
-        "Meta Llama 3.1 8B (Ücretsiz & Hızlı)"
-    ]
-)
-
-MODEL_MAPPING = {
-    "Google Gemini 2.0 Flash (Ücretsiz & En Hızlı)": "google/gemini-2.0-flash-lite-preview-02-05:free",
-    "Qwen 2.5 72B Instruct (Ücretsiz & Türkçe/Analiz)": "qwen/qwen-2.5-72b-instruct:free",
-    "Meta Llama 3.1 8B (Ücretsiz & Hızlı)": "meta-llama/llama-3.1-8b-instruct:free"
-}
-selected_model_slug = MODEL_MAPPING[selected_model_label]
+    st.sidebar.success("🌐 Yapay Zeka Servisi Aktif (Ücretsiz Gemini)")
 
 openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
 if not openrouter_api_key:
@@ -235,7 +218,7 @@ if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
     st.rerun()
 
 # ---------------------------------------------------------
-# 5. DİNAMİK LLM VE DENİZCİLİK EXPERT PROMPTU
+# 5. SABİT ÜCRETSİZ MODEL (GEMINI 2.0 FLASH) VE EXPERT PROMPTU
 # ---------------------------------------------------------
 retriever = None
 llm = None
@@ -243,8 +226,9 @@ llm = None
 if openrouter_api_key and vectorstore:
     retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
 
+    # OpenRouter Üzerindeki Güncel Ücretsiz Model
     llm = ChatOpenAI(
-        model=selected_model_slug,
+        model="google/gemini-2.0-flash-lite-preview-02-05:free",
         openai_api_key=openrouter_api_key,
         openai_api_base="https://openrouter.ai/api/v1",
         temperature=0.3,
@@ -295,7 +279,7 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            with st.spinner(f"[{selected_model_label}] SMS prosedürleri ve denizcilik tecrübesi harmanlanıyor..."):
+            with st.spinner("SMS prosedürleri ve denizcilik tecrübesi harmanlanıyor..."):
                 try:
                     relevant_docs = retriever.invoke(user_input)
                     context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "İlgili SMS dokümanı bulunamadı."
