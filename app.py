@@ -3,6 +3,7 @@ import shutil
 import io
 import datetime
 import sqlite3
+import pandas as pd
 import streamlit as st
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -13,7 +14,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.documents import Document
 
-# Belge Yükleyiciler ve OCR Araçları
+# Belge Yükleyiciler, OCR ve Doküman Oluşturma Araçları
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, UnstructuredExcelLoader
 from pdf2image import convert_from_path
 import pytesseract
@@ -32,6 +33,42 @@ INDEX_DIR = "faiss_index"
 DB_PATH = "chat_history.db"
 
 # ---------------------------------------------------------
+# DOKÜMAN OLUŞTURMA YARDIMCI FONKSİYONLARI (WORD & EXCEL)
+# ---------------------------------------------------------
+def create_docx_bytes(content_text, title="Denizcilik SMS Raporu"):
+    doc = docx.Document()
+    doc.add_heading(title, 0)
+    for line in content_text.split("\n"):
+        if line.startswith("# "):
+            doc.add_heading(line.replace("# ", "").strip(), level=1)
+        elif line.startswith("## "):
+            doc.add_heading(line.replace("## ", "").strip(), level=2)
+        elif line.startswith("### "):
+            doc.add_heading(line.replace("### ", "").strip(), level=3)
+        else:
+            doc.add_paragraph(line)
+            
+    bio = io.BytesIO()
+    doc.save(bio)
+    return bio.getvalue()
+
+def create_excel_bytes(content_text):
+    lines = [line.strip() for line in content_text.split("\n") if line.strip()]
+    data = []
+    
+    for idx, line in enumerate(lines, 1):
+        clean_line = line.lstrip("*-•1234567890. ").strip()
+        if clean_line and not clean_line.startswith("---") and not clean_line.startswith("İncelediğim Şirket"):
+            data.append({"No": idx, "İçerik / Madde / Detay": clean_line})
+        
+    df = pd.DataFrame(data if data else [{"No": 1, "İçerik / Madde / Detay": content_text}])
+    
+    bio = io.BytesIO()
+    with pd.ExcelWriter(bio, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Rapor_Verisi')
+    return bio.getvalue()
+
+# ---------------------------------------------------------
 # 2. SQLITE VERİTABANI
 # ---------------------------------------------------------
 def init_db():
@@ -44,20 +81,24 @@ def init_db():
             role TEXT,
             content TEXT,
             docx_blob BLOB,
-            file_name TEXT
+            docx_file_name TEXT,
+            excel_blob BLOB,
+            excel_file_name TEXT
         )
     ''')
     conn.commit()
     conn.close()
 
-def save_message_to_db(role, content, docx_bytes=None, file_name=None):
+def save_message_to_db(role, content, docx_bytes=None, docx_file_name=None, excel_bytes=None, excel_file_name=None):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    binary_data = sqlite3.Binary(docx_bytes) if isinstance(docx_bytes, bytes) else None
+    docx_binary = sqlite3.Binary(docx_bytes) if isinstance(docx_bytes, bytes) else None
+    excel_binary = sqlite3.Binary(excel_bytes) if isinstance(excel_bytes, bytes) else None
+    
     cursor.execute(
-        "INSERT INTO messages (timestamp, role, content, docx_blob, file_name) VALUES (?, ?, ?, ?, ?)",
-        (now, role, content, binary_data, file_name)
+        "INSERT INTO messages (timestamp, role, content, docx_blob, docx_file_name, excel_blob, excel_file_name) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (now, role, content, docx_binary, docx_file_name, excel_binary, excel_file_name)
     )
     conn.commit()
     conn.close()
@@ -65,7 +106,7 @@ def save_message_to_db(role, content, docx_bytes=None, file_name=None):
 def load_messages_from_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, timestamp, role, content, docx_blob, file_name FROM messages ORDER BY id ASC")
+    cursor.execute("SELECT id, timestamp, role, content, docx_blob, docx_file_name, excel_blob, excel_file_name FROM messages ORDER BY id ASC")
     rows = cursor.fetchall()
     conn.close()
     
@@ -79,7 +120,10 @@ def load_messages_from_db():
         }
         if row[4] and isinstance(row[4], (bytes, bytearray)) and len(row[4]) > 0:
             msg["docx_bytes"] = bytes(row[4])
-            msg["file_name"] = row[5] or "SMS_Risk_Assessment.docx"
+            msg["docx_file_name"] = row[5] or "SMS_Raporu.docx"
+        if row[6] and isinstance(row[6], (bytes, bytearray)) and len(row[6]) > 0:
+            msg["excel_bytes"] = bytes(row[6])
+            msg["excel_file_name"] = row[7] or "SMS_Raporu.xlsx"
         messages.append(msg)
     return messages
 
@@ -217,12 +261,12 @@ if api_key and vectorstore:
 
     system_prompt = (
         f"Bugünün tarihi ve günü: {current_time_str}.\n"
-        "Sen akıllı, zeki ve doğal yanıt veren bir asistansın. Şirket dokümanları, raporlar ve denizcilik/SMS konularında uzmansın.\n\n"
+        "Sen akıllı, zeki ve doğal yanıt veren bir asistansın. Şirket dokümanları, formlar, raporlar ve denizcilik/SMS konularında uzmansın.\n\n"
         "KURALLAR:\n"
         "1. Kullanıcı ne derse ona doğrudan, mantıklı ve insan gibi yanıt ver.\n"
         "2. Tarih, gün veya saat sorulduğunda sana verilen güncel tarih bilgisini kullan.\n"
-        "3. Üst üste aynı soruları sorma, kalıp cümleleri tekrarlama.\n"
-        "4. 'REFERANS DOKÜMAN' alanında bilgi varsa kullanıcıya 'dokümanlara erişemiyorum' deme; gelen metindeki verileri analiz edip detaylıca raporla.\n\n"
+        "3. Form, liste veya rapor istendiğinde düzenli, başlıklandırılmış ve net bir format sun.\n"
+        "4. 'REFERANS DOKÜMAN' alanında bilgi varsa gelen metindeki verileri analiz edip detaylıca yanıtla.\n\n"
         "REFERANS DOKÜMAN:\n{context}"
     )
 
@@ -241,6 +285,26 @@ if "messages" not in st.session_state:
 for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        
+        col1, col2 = st.columns(2)
+        if message.get("docx_bytes"):
+            with col1:
+                st.download_button(
+                    label="📥 Word Formatında İndir (.docx)",
+                    data=message["docx_bytes"],
+                    file_name=message.get("docx_file_name", "SMS_Raporu.docx"),
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key=f"dl_doc_{idx}"
+                )
+        if message.get("excel_bytes"):
+            with col2:
+                st.download_button(
+                    label="📊 Excel Formatında İndir (.xlsx)",
+                    data=message["excel_bytes"],
+                    file_name=message.get("excel_file_name", "SMS_Raporu.xlsx"),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"dl_xls_{idx}"
+                )
 
 if user_input := st.chat_input("Mesajınızı yazın..."):
     if not api_key:
@@ -258,7 +322,7 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                     "sms", "prosedür", "denetim", "sire", "solas", "marpol", "kural", "form", 
                     "checklist", "tanker", "gemi", "güverte", "makine", "isps", "ism", "rapor", 
                     "manta", "pdf", "docx", "doküman", "belge", "dosya", "incele", "maddeler",
-                    "özet", "analiz", "listele", "raporla", "bulgu", "maddeleri"
+                    "hazırla", "oluştur", "özet", "analiz", "listele", "raporla", "excel", "tablo", "xlsx"
                 ]
                 needs_rag = any(kw in user_input.lower() for kw in keywords)
                 
@@ -320,7 +384,60 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                         final_response += "\n\n---\n**İncelediğim Şirket Dokümanları:**\n" + "\n".join([f"- {src}" for src in sources])
 
                     st.markdown(final_response)
-                    save_message_to_db("assistant", final_response)
-                    st.session_state.messages.append({"role": "assistant", "content": final_response})
+
+                    # Otomatik Word ve Excel Dosyası Oluşturma Mantığı
+                    word_keywords = ["form", "rapor", "hazırla", "oluştur", "docx", "word", "maddeler", "checklist", "incele"]
+                    excel_keywords = ["excel", "tablo", "xlsx", "liste", "listele", "maddeler", "rapor"]
+
+                    docx_bytes, docx_file_name = None, None
+                    excel_bytes, excel_file_name = None, None
+                    time_stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M')
+
+                    if any(kw in user_input.lower() for kw in word_keywords):
+                        docx_file_name = f"SMS_Rapor_{time_stamp}.docx"
+                        docx_bytes = create_docx_bytes(final_response, title="SMS & Denizcilik Asistan Raporu")
+
+                    if any(kw in user_input.lower() for kw in excel_keywords):
+                        excel_file_name = f"SMS_Rapor_{time_stamp}.xlsx"
+                        excel_bytes = create_excel_bytes(final_response)
+
+                    # Butonları Ekrana Yan Yana Koyma
+                    col1, col2 = st.columns(2)
+                    if docx_bytes:
+                        with col1:
+                            st.download_button(
+                                label="📥 Word Formatında İndir (.docx)",
+                                data=docx_bytes,
+                                file_name=docx_file_name,
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                key=f"dl_new_doc_{len(st.session_state.messages)}"
+                            )
+                    if excel_bytes:
+                        with col2:
+                            st.download_button(
+                                label="📊 Excel Formatında İndir (.xlsx)",
+                                data=excel_bytes,
+                                file_name=excel_file_name,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key=f"dl_new_xls_{len(st.session_state.messages)}"
+                            )
+
+                    save_message_to_db(
+                        role="assistant", 
+                        content=final_response, 
+                        docx_bytes=docx_bytes, 
+                        docx_file_name=docx_file_name,
+                        excel_bytes=excel_bytes,
+                        excel_file_name=excel_file_name
+                    )
+                    
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": final_response,
+                        "docx_bytes": docx_bytes,
+                        "docx_file_name": docx_file_name,
+                        "excel_bytes": excel_bytes,
+                        "excel_file_name": excel_file_name
+                    })
                 else:
                     st.error(f"❌ API Hatası: {last_error if last_error else 'Servis yanıt vermedi.'}\n\nLütfen secrets dosyasındaki API key'inizi kontrol edin.")
