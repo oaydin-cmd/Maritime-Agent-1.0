@@ -18,21 +18,20 @@ from pdf2image import convert_from_path
 import pytesseract
 import docx
 
-# SSL sertifika kısıtlamaları olan ağlarda bağlantı engellerini esnetir
 os.environ["CURL_CA_BUNDLE"] = ""
 
 # ---------------------------------------------------------
 # 1. SAYFA YAPILANDIRMASI
 # ---------------------------------------------------------
-st.set_page_config(page_title="Denizcilik SMS & Exper Asistanı", page_icon="⚓", layout="wide")
-st.title("⚓ Denizcilik Teknik & SMS Uzman Asistanı")
+st.set_page_config(page_title="Denizcilik SMS & Asistan", page_icon="⚓", layout="wide")
+st.title("⚓ Denizcilik & Sohbet Asistanı")
 
 DOCS_DIR = "docs"
 INDEX_DIR = "faiss_index"
 DB_PATH = "chat_history.db"
 
 # ---------------------------------------------------------
-# 2. SQLITE VERİTABANI (KALICI SOHBET HAFIZASI)
+# 2. SQLITE VERİTABANI
 # ---------------------------------------------------------
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -195,7 +194,7 @@ if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
     st.rerun()
 
 # ---------------------------------------------------------
-# 5. AKILLI API & MODEL YÖNLENDİRMESİ
+# 5. AKILLI API & ESNEK İSTEM YÖNLENDİRMESİ
 # ---------------------------------------------------------
 retriever = None
 
@@ -205,25 +204,23 @@ if api_key and vectorstore:
     if api_key.startswith("sk-or-"):
         api_base = "https://openrouter.ai/api/v1"
         target_models = [
-            "google/gemini-2.5-flash",
+            "google/gemini-2.0-flash-lite-preview-02-05:free",
             "meta-llama/llama-3.3-70b-instruct:free",
-            "deepseek/deepseek-chat"
+            "deepseek/deepseek-chat:free"
         ]
     else:
         api_base = "https://api.deepseek.com"
         target_models = ["deepseek-chat", "deepseek-reasoner"]
 
+    # Esnetilmiş Sistem İstem Metni
     system_prompt = (
-        "Sen denizcilik, SMS prosedürleri ve teknik gemi operasyonları konusunda uzman bir asistansın.\n\n"
-        "YAKLAŞIMIN VE MİSYONUN:\n"
-        "1. BİREBİR ALINTI YAPMA: Verilen SMS ve teknik dokümanlardaki metinleri kopyala-yapıştır yapma! "
-        "Bilgiyi özümse, mesleki tecrübeyle harmanla ve pratik, sektörel bir dille açıkla.\n"
-        "2. OPERASYONEL YORUM EKLE: Prosedürün sadece ne olduğunu değil; Neden önemli olduğunu, "
-        "uygularken yapılan tipik hataları ve denetimlerde nasıl sorgulandığını belirt.\n"
-        "3. PRATİK TAVSİYE VER: Sahada uygulanabilecek somut adımlar öner.\n"
-        "4. KENDİNİ TANITMA VEYA İMZA ATMA: Yanıtlarının sonuna veya başına 'Kıdemli DPA', 'SIRE Enspektörü' veya benzeri unvanlar, imzalar ekleme. Doğrudan soruya ve çözüme odaklan.\n\n"
+        "Sen doğal, samimi ve yardımsever bir yapay zeka asistansın. Denizcilik konularına uzmansın ancak her sohbeti zorla denizcilik terimlerine veya prosedürlere bağlama.\n\n"
+        "DAVRANIŞ KURALLARI:\n"
+        "1. Kullanıcı genel sohbet ediyorsa (selamlama, hal hatır sorma, gündelik konular) son derece doğal, samimi ve kısa yanıtlar ver.\n"
+        "2. Sadece kullanıcı spesifik bir teknik soru, kural, SMS veya denizcilik prosedürü sorduğunda ekteki referans doküman bilgilerini kullan.\n"
+        "3. Yanıtlarında asla yapay duran unvanlar, imzalar veya gereksiz resmiyet kullanma.\n\n"
         "GEÇMİŞ SOHBET HAFIZASI:\n{chat_history}\n\n"
-        "REFERANS SMS VE TEKNİK DOKÜMAN İÇERİĞİ:\n{context}"
+        "REFERANS DOKÜMAN İÇERİĞİ (Sadece ihtiyaç halinde kullan):\n{context}"
     )
 
     prompt = ChatPromptTemplate.from_messages([
@@ -232,7 +229,7 @@ if api_key and vectorstore:
     ])
 
 # ---------------------------------------------------------
-# 6. SOHBET ARAYÜZÜ VE İŞLEME
+# 6. SOHBET ARAYÜZÜ VEYA İŞLEME
 # ---------------------------------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = load_messages_from_db()
@@ -241,11 +238,9 @@ for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya denetimler hakkında bir soru sorun..."):
+if user_input := st.chat_input("Mesajınızı yazın..."):
     if not api_key:
         st.error("⚠️ `.streamlit/secrets.toml` içinde geçerli bir API Key bulunamadı.")
-    elif not vectorstore:
-        st.error("⚠️ Doküman bulunamadı. Lütfen 'docs' klasörüne PDF ekleyin.")
     else:
         st.session_state.messages.append({"role": "user", "content": user_input})
         save_message_to_db("user", user_input)
@@ -254,11 +249,18 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            with st.spinner("İnceleniyor..."):
-                relevant_docs = retriever.invoke(user_input)
-                context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "İlgili SMS dokümanı bulunamadı."
+            with st.spinner("Yazıyor..."):
+                # Mesajda teknik terim/soru kalıbı yoksa doküman aramasını atla
+                keywords = ["sms", "prosedür", "denetim", "sire", "solas", "marpol", "kural", "form", "checklist", "tanker", "gemi", "güverte", "makine", "isps", "ism"]
+                needs_rag = any(kw in user_input.lower() for kw in keywords)
                 
-                recent_history = load_messages_from_db()[-10:]
+                relevant_docs = []
+                if vectorstore and needs_rag:
+                    relevant_docs = retriever.invoke(user_input)
+                
+                context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "Doküman araması yapılmadı."
+                
+                recent_history = load_messages_from_db()[-6:]
                 history_str = "\n".join([f"{m['timestamp']} - {m['role'].upper()}: {m['content']}" for m in recent_history])
 
                 formatted_prompt = prompt.format(context=context_text, chat_history=history_str, question=user_input)
@@ -272,10 +274,10 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
                             model=model_name,
                             openai_api_key=api_key,
                             openai_api_base=api_base,
-                            temperature=0.3,
-                            timeout=15,
-                            max_retries=1,
-                            default_headers={"HTTP-Referer": "http://localhost:8501", "X-Title": "Maritime Expert Assistant"}
+                            temperature=0.7,
+                            timeout=8,
+                            max_retries=0,
+                            default_headers={"HTTP-Referer": "http://localhost:8501", "X-Title": "Expert Assistant"}
                         )
                         llm_response = llm.invoke(formatted_prompt)
                         break
@@ -304,4 +306,4 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
                     save_message_to_db("assistant", final_response)
                     st.session_state.messages.append({"role": "assistant", "content": final_response})
                 else:
-                    st.error(f"❌ API Hatası: {last_error if last_error else 'Servis yanıt vermedi.'}\n\nLütfen secrets dosyasındaki API key'inizi ve hesabınızdaki bakiye/kota durumunu kontrol edin.")
+                    st.error(f"❌ API Hatası: {last_error if last_error else 'Servis yanıt vermedi.'}\n\nLütfen secrets dosyasındaki API key'inizi kontrol edin.")
