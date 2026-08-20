@@ -27,7 +27,7 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
-# SSL Sertifika / Ağ yapılandırması
+# SSL sertifika kısıtlamaları olan ağlarda bağlantı engellerini esnetir
 os.environ["CURL_CA_BUNDLE"] = ""
 
 # ---------------------------------------------------------
@@ -41,6 +41,7 @@ INDEX_DIR = "faiss_index"
 DB_PATH = "chat_history.db"
 
 def check_internet_connection():
+    """Ağ kısıtlaması olsa dahi uygulamanın durmasını engeller."""
     try:
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
@@ -51,7 +52,7 @@ def check_internet_connection():
         return True, f"Ağ uyarısı (Yapay zekaya erişim deneniyor): {str(e)}"
 
 # ---------------------------------------------------------
-# 2. SQLITE VERİTABANI (SÜREKLİ HAFIZA)
+# 2. SQLITE VERİTABANI (KALICI SOHBET HAFIZASI)
 # ---------------------------------------------------------
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -217,32 +218,31 @@ if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
     st.rerun()
 
 # ---------------------------------------------------------
-# 5. DENİZCİLİK EXPERT (DENEYİMLİ DPA/ENSPERTÖR) PROMPTU
+# 5. ÜCRETSİZ LLM VE DENİZCİLİK EXPERT PROMPTU
 # ---------------------------------------------------------
 retriever = None
 llm = None
 
 if openrouter_api_key and vectorstore:
-    # Dokümanlardan daha geniş bağlam çekmek için k=6 yapıldı
     retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
 
+    # OpenRouter Ücretsiz Model Seçimi
     llm = ChatOpenAI(
-        model="anthropic/claude-3.5-sonnet",
+        model="meta-llama/llama-3.3-70b-instruct:free",
         openai_api_key=openrouter_api_key,
         openai_api_base="https://openrouter.ai/api/v1",
-        temperature=0.3, # Özgün yorum ve analiz yapabilmesi için hafif yükseltildi
-        timeout=45,
+        temperature=0.3,
+        timeout=60,
         max_retries=3,
         default_headers={"HTTP-Referer": "http://localhost:8501", "X-Title": "Maritime Expert Assistant"}
     )
 
-    # UZMAN YORUMLAYICI SISTEM TALİMATI (SYSTEM PROMPT)
     system_prompt = (
         "Sen uzun yıllar ocean-going gemilerde Süvari/Başmühendis olarak görev yapmış, şu an ise Kıdemli DPA, "
         "SIRE 2.0 Enspektörü ve Deniz Emniyeti Uzmanısın.\n\n"
         "YAKLAŞIMIN VE MİSYONUN:\n"
         "1. BİREBİR ALINTI YAPMA: Verilen SMS ve teknik dokümanlardaki metinleri kopyala-yapıştır yapma! "
-        "Bilgiyi sindir, kendi mesleki tecrübenle harmanla ve bir deniz uzmanı gibi pratik, sektörel bir dille açıkla.\n"
+        "Bilgiyi özümse, kendi mesleki tecrübenle harmanla ve bir deniz uzmanı gibi pratik, sektörel bir dille açıkla.\n"
         "2. OPERASYONEL YORUM EKLE: Kuralın veya prosedürün sadece ne olduğunu değil; Neden önemli olduğunu, "
         "güvertede/makinede uygularken yapılan tipik hataları ve bir PSC/SIRE denetiminde enspektörün burayı nasıl sorgulayacağını belirt.\n"
         "3. PRATİK TAVSİYE VER: Kullanıcıya sadece teorik bilgi sunma, vardiya zabitinin veya çarkçının sahada uygulayabileceği somut adımlar öner.\n"
@@ -257,7 +257,7 @@ if openrouter_api_key and vectorstore:
     ])
 
 # ---------------------------------------------------------
-# 6. SOHBET ARAYÜZÜ VE İŞLEME
+# 6. SOHBET ARAYÜZÜ VEYA İŞLEME
 # ---------------------------------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = load_messages_from_db()
@@ -281,20 +281,16 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
         with st.chat_message("assistant"):
             with st.spinner("SMS prosedürleri ve denizcilik tecrübesi harmanlanıyor..."):
                 try:
-                    # Doküman tarama
                     relevant_docs = retriever.invoke(user_input)
                     context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "İlgili SMS dokümanı bulunamadı."
                     
-                    # Geçmiş hafızayı yükleme
                     recent_history = load_messages_from_db()[-10:]
                     history_str = "\n".join([f"{m['timestamp']} - {m['role'].upper()}: {m['content']}" for m in recent_history])
 
-                    # LLM Sorgusu
                     formatted_prompt = prompt.format(context=context_text, chat_history=history_str, question=user_input)
                     llm_response = llm.invoke(formatted_prompt)
                     response_text = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
 
-                    # Referans dokümanları sadece dipnot olarak derleme
                     sources = []
                     seen = set()
                     for doc in relevant_docs:
@@ -311,7 +307,6 @@ if user_input := st.chat_input("Gemi operasyonları, SMS prosedürleri veya dene
 
                     st.markdown(final_response)
 
-                    # Veritabanına kaydetme
                     save_message_to_db("assistant", final_response)
                     st.session_state.messages.append({"role": "assistant", "content": final_response})
 
