@@ -204,7 +204,7 @@ def load_or_create_vectorstore():
     vectorstore.save_local(INDEX_DIR)
     return vectorstore
 
-vectorstore = load_or_createvectorstore()
+vectorstore = load_or_create_vectorstore()
 
 if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
     if os.path.exists(INDEX_DIR):
@@ -220,7 +220,6 @@ retriever = None
 if api_key and vectorstore:
     retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
 
-    # Anahtar türünü kontrol et: OpenRouter tuşu mu yoksa Resmi DeepSeek tuşu mu?
     if api_key.startswith("sk-or-"):
         api_base = "https://openrouter.ai/api/v1"
         target_models = ["deepseek/deepseek-chat", "deepseek/deepseek-r1:free", "deepseek/deepseek-chat:free"]
