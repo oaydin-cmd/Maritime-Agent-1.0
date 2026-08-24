@@ -12,3 +12,6 @@ python-docx
 docx2txt
 openpyxl
 textract
+rank_bm25
+pandas
+openpyxl
