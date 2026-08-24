@@ -8,8 +8,8 @@ import streamlit as st
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_community.retrievers import BM25Retriever
-from langchain.retrievers import EnsembleRetriever
+# EnsembleRetriever ve BM25Retriever doğru paket olan langchain_community üzerinden çekiliyor
+from langchain_community.retrievers import EnsembleRetriever, BM25Retriever
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -277,7 +277,6 @@ if st.sidebar.button("🔄 Doküman İndeksini Yenile"):
 if api_key and vectorstore:
     faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
     
-    # BM25 ve FAISS harmanlaması (Hybrid Search)
     ensemble_retriever = EnsembleRetriever(
         retrievers=[bm25_retriever, faiss_retriever],
         weights=[0.5, 0.5]
@@ -356,12 +355,10 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
         with st.chat_message("assistant"):
             with st.spinner("Dokümanlar taranıyor ve yanıt hazırlanıyor..."):
                 
-                # KOŞULSUZ RAG ARAMASI (Hybrid Search)
                 relevant_docs = []
                 if vectorstore:
                     fetched_docs = ensemble_retriever.invoke(user_input)
                     
-                    # Kategori Filtreleme
                     if selected_category != "Tüm Dokümanlar":
                         relevant_docs = [d for d in fetched_docs if d.metadata.get("category") == selected_category]
                     else:
@@ -423,7 +420,6 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
 
                     st.markdown(final_response)
 
-                    # Word ve Excel Oluşturma Kontrolü
                     word_keywords = ["form", "rapor", "hazırla", "oluştur", "docx", "word", "maddeler", "checklist", "incele"]
                     excel_keywords = ["excel", "tablo", "xlsx", "liste", "listele", "maddeler", "rapor"]
 
