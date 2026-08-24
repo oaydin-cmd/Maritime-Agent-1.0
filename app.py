@@ -8,8 +8,11 @@ import streamlit as st
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-# EnsembleRetriever ve BM25Retriever doğru paket olan langchain_community üzerinden çekiliyor
-from langchain_community.retrievers import EnsembleRetriever, BM25Retriever
+
+# Import yolları kütüphane standartlarına göre ayrıştırıldı
+from langchain.retrievers import EnsembleRetriever
+from langchain_community.retrievers import BM25Retriever
+
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
