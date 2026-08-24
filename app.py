@@ -9,9 +9,16 @@ import streamlit as st
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 
-# Import yolları kütüphane standartlarına göre ayrıştırıldı
-from langchain.retrievers import EnsembleRetriever
-from langchain_community.retrievers import BM25Retriever
+# Esnek ve güvenli Retriever import bloğu (Streamlit Cloud sürüm çakışmalarını önler)
+try:
+    from langchain_community.retrievers import EnsembleRetriever, BM25Retriever
+except ImportError:
+    try:
+        from langchain.retrievers import EnsembleRetriever
+        from langchain_community.retrievers import BM25Retriever
+    except ImportError:
+        from langchain.retrievers.ensemble import EnsembleRetriever
+        from langchain_community.retrievers import BM25Retriever
 
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
