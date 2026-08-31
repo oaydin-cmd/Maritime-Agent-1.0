@@ -275,8 +275,8 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                         st.error(f"❌ Groq API Hatası: {err_str}")
                         break
 
-            if not response_text and not st._is_running_with_streamlit:
-                st.error("❌ Erişilebilir bir Groq modeli bulunamadı. Lütfen API Anahtarınızı kontrol edin.")
+            if not response_text:
+                st.error("❌ Erişilebilir bir Groq modeli bulunamadı. Lütfen API Anahtarınızı ve model erişim izinlerinizi kontrol edin.")
 
             if response_text:
                 # Referans doküman kaynaklarını ekleme
