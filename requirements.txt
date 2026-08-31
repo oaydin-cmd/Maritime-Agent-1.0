@@ -13,3 +13,5 @@ openpyxl
 pdf2image
 pytesseract
 python-docx
+langchain-google-genai
+google-generativeai
