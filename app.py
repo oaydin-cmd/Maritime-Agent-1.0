@@ -132,7 +132,7 @@ vectorstore = load_vectorstore()
 # ---------------------------------------------------------
 # 5. YAN MENÜ (SIDEBAR) & GROQ AYARLARI
 # ---------------------------------------------------------
-HARDCODED_GROQ_KEY = "" # İsterseniz API anahtarınızı buraya yazabilirsiniz
+HARDCODED_GROQ_KEY = ""  # Gerekirse alternatif anahtar eklenebilir
 
 groq_api_key = st.secrets.get("GROQ_API_KEY", HARDCODED_GROQ_KEY)
 
@@ -195,7 +195,7 @@ system_prompt = (
 )
 
 # ---------------------------------------------------------
-# 7. SOHBET ARAYÜZÜ VE İŞLEME
+# 7. SOHBET ARAYÜZÜ VE CANLI YANIT İŞLEME (STREAMING)
 # ---------------------------------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = load_messages_from_db()
@@ -217,7 +217,7 @@ for idx, message in enumerate(st.session_state.messages):
 # Kullanıcı yeni girdi girdiğinde
 if user_input := st.chat_input("Mesajınızı yazın..."):
     if not groq_api_key or not groq_api_key.startswith("gsk_"):
-        st.error("⚠️ Lütfen sol menüden veya kod içerisinden geçerli bir Groq API Key tanımlayın (`gsk_...`).")
+        st.error("⚠️ Lütfen sol menüden veya Streamlit Secrets üzerinden geçerli bir Groq API Key tanımlayın (`gsk_...`).")
     else:
         st.session_state.messages.append({"role": "user", "content": user_input})
         save_message_to_db("user", user_input)
@@ -226,88 +226,90 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            with st.spinner("Groq yanıt hazırlıyor..."):
-                # RAG (Vektör araması) tetikleme kelimeleri
-                keywords = [
-                    "sms", "prosedür", "denetim", "sire", "solas", "marpol", "kural", "form", 
-                    "checklist", "tanker", "gemi", "güverte", "makine", "isps", "ism", "rapor", 
-                    "manta", "pdf", "docx", "doküman", "belge", "dosya", "incele", "maddeler",
-                    "hazırla", "oluştur", "özet", "analiz", "listele", "raporla"
-                ]
-                needs_rag = any(kw in user_input.lower() for kw in keywords)
-                
-                relevant_docs = []
-                if retriever and needs_rag:
-                    relevant_docs = retriever.invoke(user_input)
-                
-                context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "Yok"
+            # RAG (Vektör araması) tetikleme kelimeleri
+            keywords = [
+                "sms", "prosedür", "denetim", "sire", "solas", "marpol", "kural", "form", 
+                "checklist", "tanker", "gemi", "güverte", "makine", "isps", "ism", "rapor", 
+                "manta", "pdf", "docx", "doküman", "belge", "dosya", "incele", "maddeler",
+                "hazırla", "oluştur", "özet", "analiz", "listele", "raporla"
+            ]
+            needs_rag = any(kw in user_input.lower() for kw in keywords)
+            
+            relevant_docs = []
+            if retriever and needs_rag:
+                relevant_docs = retriever.invoke(user_input)
+            
+            context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "Yok"
 
-                # Sohbet geçmişini al
-                raw_history = load_messages_from_db()[:-1]
-                history_text = ""
-                for m in raw_history[-6:]:
-                    role_str = "Kullanıcı" if m["role"] == "user" else "Asistan"
-                    history_text += f"{role_str}: {m['content']}\n"
+            # Sohbet geçmişini al
+            raw_history = load_messages_from_db()[:-1]
+            history_text = ""
+            for m in raw_history[-6:]:
+                role_str = "Kullanıcı" if m["role"] == "user" else "Asistan"
+                history_text += f"{role_str}: {m['content']}\n"
 
-                full_prompt = (
-                    f"{system_prompt.format(context=context_text)}\n\n"
-                    f"ÖNCEKİ KONUŞMALAR:\n{history_text}\n"
-                    f"Kullanıcı: {user_input}\n"
-                    f"Asistan:"
+            full_prompt = (
+                f"{system_prompt.format(context=context_text)}\n\n"
+                f"ÖNCEKİ KONUŞMALAR:\n{history_text}\n"
+                f"Kullanıcı: {user_input}\n"
+                f"Asistan:"
+            )
+
+            try:
+                # Groq Bağlantısı
+                llm = ChatGroq(
+                    groq_api_key=groq_api_key,
+                    model_name=groq_model,
+                    temperature=0.3
                 )
+                
+                # 1. LangChain stream jeneratörü oluşturuluyor
+                response_stream = llm.stream(full_prompt)
+                
+                # 2. Canlı kelime akışı ile ekrana yazdırılıyor
+                response_text = st.write_stream(response_stream)
 
-                try:
-                    # Groq Bağlantısı
-                    llm = ChatGroq(
-                        groq_api_key=groq_api_key,
-                        model_name=groq_model,
-                        temperature=0.3
-                    )
+                # Referans doküman kaynaklarını ekleme
+                sources = []
+                seen = set()
+                for doc in relevant_docs:
+                    file_name = doc.metadata.get("source_file", doc.metadata.get("source", "Doküman"))
+                    page_info = doc.metadata.get("page_label", "")
+                    source_str = f"📄 {file_name} ({page_info})" if page_info else f"📄 {file_name}"
+                    if source_str not in seen:
+                        seen.add(source_str)
+                        sources.append(source_str)
+
+                final_response = response_text
+                if sources:
+                    sources_text = "\n\n---\n**İncelediğim Şirket Dokümanları:**\n" + "\n".join([f"- {src}" for src in sources])
+                    st.markdown(sources_text)
+                    final_response += sources_text
+
+                # Word indirme butonu şartları
+                form_keywords = ["form", "rapor", "hazırla", "oluştur", "docx", "word", "maddeler", "checklist", "incele"]
+                docx_bytes = None
+                file_name = None
+
+                if any(kw in user_input.lower() for kw in form_keywords):
+                    file_name = f"SMS_Rapor_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.docx"
+                    docx_bytes = create_docx_bytes(final_response, title="SMS & Denizcilik Asistan Raporu")
                     
-                    res = llm.invoke(full_prompt)
-                    response_text = res.content
+                    st.download_button(
+                        label="📥 Word Formatında İndir (.docx)",
+                        data=docx_bytes,
+                        file_name=file_name,
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        key=f"dl_new_{len(st.session_state.messages)}"
+                    )
 
-                    # Referans doküman kaynaklarını ekleme
-                    sources = []
-                    seen = set()
-                    for doc in relevant_docs:
-                        file_name = doc.metadata.get("source_file", doc.metadata.get("source", "Doküman"))
-                        page_info = doc.metadata.get("page_label", "")
-                        source_str = f"📄 {file_name} ({page_info})" if page_info else f"📄 {file_name}"
-                        if source_str not in seen:
-                            seen.add(source_str)
-                            sources.append(source_str)
+                save_message_to_db("assistant", final_response, docx_bytes=docx_bytes, file_name=file_name)
+                st.session_state.messages.append({
+                    "role": "assistant", 
+                    "content": final_response,
+                    "docx_bytes": docx_bytes,
+                    "file_name": file_name
+                })
 
-                    final_response = response_text
-                    if sources:
-                        final_response += "\n\n---\n**İncelediğim Şirket Dokümanları:**\n" + "\n".join([f"- {src}" for src in sources])
-
-                    st.markdown(final_response)
-
-                    # Word indirme butonu şartları
-                    form_keywords = ["form", "rapor", "hazırla", "oluştur", "docx", "word", "maddeler", "checklist", "incele"]
-                    docx_bytes = None
-                    file_name = None
-
-                    if any(kw in user_input.lower() for kw in form_keywords):
-                        file_name = f"SMS_Rapor_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.docx"
-                        docx_bytes = create_docx_bytes(final_response, title="SMS & Denizcilik Asistan Raporu")
-                        
-                        st.download_button(
-                            label="📥 Word Formatında İndir (.docx)",
-                            data=docx_bytes,
-                            file_name=file_name,
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            key=f"dl_new_{len(st.session_state.messages)}"
-                        )
-
-                    save_message_to_db("assistant", final_response, docx_bytes=docx_bytes, file_name=file_name)
-                    st.session_state.messages.append({
-                        "role": "assistant", 
-                        "content": final_response,
-                        "docx_bytes": docx_bytes,
-                        "file_name": file_name
-                    })
-
-                except Exception as err:
-                    st.error(f"❌ Groq API Hatası: {str(err)}")
+            except Exception as err:
+                st.error(f"❌ Groq API Hatası: {str(err)}")
