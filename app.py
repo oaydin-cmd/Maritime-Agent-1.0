@@ -15,7 +15,7 @@ from langchain_openai import ChatOpenAI
 # 1. STREAMLIT SAYFA YAPILANDIRMASI
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="Maritime Agent",
+    page_title="Maritime & SMS RAG Assistant",
     page_icon="⚓",
     layout="wide"
 )
