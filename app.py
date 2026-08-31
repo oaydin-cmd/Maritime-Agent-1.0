@@ -10,8 +10,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 
-# Model Entegrasyonu (Doğrudan Google Gemini API)
-from langchain_google_genai import ChatGoogleGenerativeAI
+# OpenRouter / OpenAI uyumlu istemci
 from langchain_openai import ChatOpenAI
 
 # ---------------------------------------------------------
@@ -120,12 +119,10 @@ def create_docx_bytes(content_text, title="SMS & Denizcilik Asistan Raporu"):
 # ---------------------------------------------------------
 # 4. API KEYLERİ VE FAISS YÜKLEME
 # ---------------------------------------------------------
-# Doğrudan gömülü Google Gemini API Key (Varsayılan olarak kullanılır)
 HARDCODED_GEMINI_KEY = "AQ.Ab8RN6KiqPcMC_qS3DXOYuRe8EaNMIGoxrm-6f2hf3s2IWZGaQ"
 
 gemini_api_key = st.secrets.get("GEMINI_API_KEY", HARDCODED_GEMINI_KEY)
 openrouter_api_key = st.secrets.get("OPENROUTER_API_KEY", None)
-deepseek_api_key = st.secrets.get("DEEPSEEK_API_KEY", None)
 
 @st.cache_resource
 def load_vectorstore():
@@ -159,16 +156,14 @@ with st.sidebar:
     
     available_providers = []
     if gemini_api_key:
-        available_providers.append("Google Gemini (Resmi API - Varsayılan)")
+        available_providers.append("Google Gemini (Direct REST)")
     if openrouter_api_key:
-        available_providers.append("OpenRouter")
-    if deepseek_api_key:
-        available_providers.append("DeepSeek Direct")
+        available_providers.append("OpenRouter (Gemini 2.0 Flash Lite)")
         
     if available_providers:
         selected_provider = st.selectbox("Sağlayıcı Seçin:", available_providers)
     else:
-        st.error("🔑 Tanımlı API Key bulunamadı.")
+        st.error("🔑 API Key bulunamadı.")
         selected_provider = None
 
     st.divider()
@@ -272,24 +267,19 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                 last_error = ""
 
                 try:
-                    if "Google Gemini" in selected_provider:
-                        llm = ChatGoogleGenerativeAI(
-                            model="gemini-2.0-flash",
-                            google_api_key=gemini_api_key,
-                            temperature=0.4
-                        )
-                    elif "OpenRouter" in selected_provider:
+                    if "Google Gemini (Direct REST)" in selected_provider:
+                        # Direct OpenAI-compatible endpoint call for Google Gemini
                         llm = ChatOpenAI(
-                            model="google/gemini-2.0-flash-lite-001",
-                            openai_api_key=openrouter_api_key,
-                            openai_api_base="https://openrouter.ai/api/v1",
+                            model="gemini-2.0-flash",
+                            api_key=gemini_api_key,
+                            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
                             temperature=0.4
                         )
                     else:
                         llm = ChatOpenAI(
-                            model="deepseek-chat",
-                            openai_api_key=deepseek_api_key,
-                            openai_api_base="https://api.deepseek.com",
+                            model="google/gemini-2.0-flash-lite-001",
+                            openai_api_key=openrouter_api_key,
+                            openai_api_base="https://openrouter.ai/api/v1",
                             temperature=0.4
                         )
 
