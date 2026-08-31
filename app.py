@@ -155,10 +155,8 @@ with st.sidebar:
     groq_model = st.selectbox(
         "Model Seçin:",
         [
-            "llama-3.1-8b-instant",
             "llama-3.3-70b-versatile",
-            "llama3-70b-8192",
-            "llama3-8b-8192",
+            "llama-3.1-8b-instant",
             "mixtral-8x7b-32768",
             "gemma2-9b-it"
         ]
@@ -267,10 +265,10 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                 response_text = st.write_stream(response_stream)
 
             except Exception as err:
-                # Model bulunamadı hatasında otomatik yedek modele geçiş (Fallback)
-                if "model_not_found" in str(err) or "404" in str(err):
-                    fallback_model = "llama3-70b-8192" if groq_model != "llama3-70b-8192" else "mixtral-8x7b-32768"
-                    st.warning(f"⚠️ `{groq_model}` bulunamadı, otomatik olarak `{fallback_model}` modeline geçiliyor...")
+                # Model bulunamadı veya decommissioned hatasında otomatik yedek modele geçiş (Fallback)
+                if "decommissioned" in str(err) or "model_not_found" in str(err) or "400" in str(err) or "404" in str(err):
+                    fallback_model = "llama-3.1-8b-instant" if groq_model != "llama-3.1-8b-instant" else "mixtral-8x7b-32768"
+                    st.warning(f"⚠️ `{groq_model}` aktif değil, otomatik olarak `{fallback_model}` modeline geçiliyor...")
                     
                     try:
                         llm_fallback = ChatGroq(
