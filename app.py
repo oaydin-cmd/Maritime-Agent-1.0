@@ -10,7 +10,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 
-# Model Entegrasyonları
+# Model Entegrasyonu (Doğrudan Google Gemini API)
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 
@@ -120,7 +120,10 @@ def create_docx_bytes(content_text, title="SMS & Denizcilik Asistan Raporu"):
 # ---------------------------------------------------------
 # 4. API KEYLERİ VE FAISS YÜKLEME
 # ---------------------------------------------------------
-gemini_api_key = st.secrets.get("GEMINI_API_KEY", None)
+# Doğrudan gömülü Google Gemini API Key (Varsayılan olarak kullanılır)
+HARDCODED_GEMINI_KEY = "AQ.Ab8RN6KiqPcMC_qS3DXOYuRe8EaNMIGoxrm-6f2hf3s2IWZGaQ"
+
+gemini_api_key = st.secrets.get("GEMINI_API_KEY", HARDCODED_GEMINI_KEY)
 openrouter_api_key = st.secrets.get("OPENROUTER_API_KEY", None)
 deepseek_api_key = st.secrets.get("DEEPSEEK_API_KEY", None)
 
@@ -156,7 +159,7 @@ with st.sidebar:
     
     available_providers = []
     if gemini_api_key:
-        available_providers.append("Google Gemini (Resmi API)")
+        available_providers.append("Google Gemini (Resmi API - Varsayılan)")
     if openrouter_api_key:
         available_providers.append("OpenRouter")
     if deepseek_api_key:
@@ -165,7 +168,7 @@ with st.sidebar:
     if available_providers:
         selected_provider = st.selectbox("Sağlayıcı Seçin:", available_providers)
     else:
-        st.error("🔑 Secrets alanında tanımlı API Key bulunamadı.")
+        st.error("🔑 Tanımlı API Key bulunamadı.")
         selected_provider = None
 
     st.divider()
@@ -277,7 +280,7 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                         )
                     elif "OpenRouter" in selected_provider:
                         llm = ChatOpenAI(
-                            model="google/gemini-2.0-flash-001",
+                            model="google/gemini-2.0-flash-lite-001",
                             openai_api_key=openrouter_api_key,
                             openai_api_base="https://openrouter.ai/api/v1",
                             temperature=0.4
