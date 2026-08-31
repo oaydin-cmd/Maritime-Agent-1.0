@@ -136,6 +136,13 @@ HARDCODED_GROQ_KEY = ""  # Gerekirse alternatif anahtar eklenebilir
 
 groq_api_key = st.secrets.get("GROQ_API_KEY", HARDCODED_GROQ_KEY)
 
+AVAILABLE_MODELS = [
+    "llama-3.3-70b-versatile",
+    "mixtral-8x7b-32768",
+    "gemma2-9b-it",
+    "llama-3.1-8b-instant"
+]
+
 with st.sidebar:
     st.header("⚙️ Kontrol Paneli")
     
@@ -152,15 +159,7 @@ with st.sidebar:
     st.divider()
     
     st.subheader("🤖 Groq Model Seçimi")
-    groq_model = st.selectbox(
-        "Model Seçin:",
-        [
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
-            "mixtral-8x7b-32768",
-            "gemma2-9b-it"
-        ]
-    )
+    groq_model = st.selectbox("Model Seçin:", AVAILABLE_MODELS)
 
     st.divider()
 
@@ -194,7 +193,7 @@ system_prompt = (
 )
 
 # ---------------------------------------------------------
-# 7. SOHBET ARAYÜZÜ VE CANLI YANIT İŞLEME (STREAMING + FALLBACK)
+# 7. SOHBET ARAYÜZÜ VE CANLI YANIT İŞLEME (FALLBACK DÖNGÜSÜ)
 # ---------------------------------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = load_messages_from_db()
@@ -254,36 +253,30 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                 f"Asistan:"
             )
 
-            try:
-                # Groq Bağlantısı (İlk Deneme)
-                llm = ChatGroq(
-                    groq_api_key=groq_api_key,
-                    model_name=groq_model,
-                    temperature=0.3
-                )
-                response_stream = llm.stream(full_prompt)
-                response_text = st.write_stream(response_stream)
+            # Modeller sırayla denenir (Seçilen model ilk sırada)
+            models_to_try = [groq_model] + [m for m in AVAILABLE_MODELS if m != groq_model]
+            response_text = None
 
-            except Exception as err:
-                # Model bulunamadı veya decommissioned hatasında otomatik yedek modele geçiş (Fallback)
-                if "decommissioned" in str(err) or "model_not_found" in str(err) or "400" in str(err) or "404" in str(err):
-                    fallback_model = "llama-3.1-8b-instant" if groq_model != "llama-3.1-8b-instant" else "mixtral-8x7b-32768"
-                    st.warning(f"⚠️ `{groq_model}` aktif değil, otomatik olarak `{fallback_model}` modeline geçiliyor...")
-                    
-                    try:
-                        llm_fallback = ChatGroq(
-                            groq_api_key=groq_api_key,
-                            model_name=fallback_model,
-                            temperature=0.3
-                        )
-                        response_stream = llm_fallback.stream(full_prompt)
-                        response_text = st.write_stream(response_stream)
-                    except Exception as fb_err:
-                        st.error(f"❌ Groq API Hatası: {str(fb_err)}")
-                        response_text = None
-                else:
-                    st.error(f"❌ Groq API Hatası: {str(err)}")
-                    response_text = None
+            for model_candidate in models_to_try:
+                try:
+                    llm = ChatGroq(
+                        groq_api_key=groq_api_key,
+                        model_name=model_candidate,
+                        temperature=0.3
+                    )
+                    response_stream = llm.stream(full_prompt)
+                    response_text = st.write_stream(response_stream)
+                    break
+                except Exception as err:
+                    err_str = str(err)
+                    if any(code in err_str for code in ["404", "400", "model_not_found", "decommissioned"]):
+                        continue
+                    else:
+                        st.error(f"❌ Groq API Hatası: {err_str}")
+                        break
+
+            if not response_text and not st._is_running_with_streamlit:
+                st.error("❌ Erişilebilir bir Groq modeli bulunamadı. Lütfen API Anahtarınızı kontrol edin.")
 
             if response_text:
                 # Referans doküman kaynaklarını ekleme
