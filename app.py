@@ -10,7 +10,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 
-# Google Gemini Entegrasyonu
+# Model Entegrasyonları
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 
@@ -44,7 +44,6 @@ def init_db():
         )
     """)
     
-    # Eksik sütun kontrolü (DB Migration)
     cursor.execute("PRAGMA table_info(messages)")
     columns = [column[1] for column in cursor.fetchall()]
     
@@ -278,7 +277,7 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                         )
                     elif "OpenRouter" in selected_provider:
                         llm = ChatOpenAI(
-                            model="google/gemini-2.0-flash-001",
+                            model="google/gemini-2.0-flash-00",
                             openai_api_key=openrouter_api_key,
                             openai_api_base="https://openrouter.ai/api/v1",
                             temperature=0.4
