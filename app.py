@@ -3,6 +3,7 @@ import sqlite3
 import datetime
 import io
 import docx
+import requests
 import streamlit as st
 
 from langchain_community.vectorstores import FAISS
@@ -10,7 +11,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 
-# OpenRouter / OpenAI uyumlu istemci
+# OpenRouter için ChatOpenAI
 from langchain_openai import ChatOpenAI
 
 # ---------------------------------------------------------
@@ -117,12 +118,35 @@ def create_docx_bytes(content_text, title="SMS & Denizcilik Asistan Raporu"):
     return bio.getvalue()
 
 # ---------------------------------------------------------
-# 4. API KEYLERİ VE FAISS YÜKLEME
+# 4. DIRECT GEMINI API ÇAĞRISI (TOKEN / KEY HANDLER)
 # ---------------------------------------------------------
 HARDCODED_GEMINI_KEY = "AQ.Ab8RN6KiqPcMC_qS3DXOYuRe8EaNMIGoxrm-6f2hf3s2IWZGaQ"
-
 gemini_api_key = st.secrets.get("GEMINI_API_KEY", HARDCODED_GEMINI_KEY)
 openrouter_api_key = st.secrets.get("OPENROUTER_API_KEY", None)
+
+def call_direct_gemini(prompt_text, api_key):
+    """
+    Hem standart API key hem de OAuth Bearer Token formatlarını destekleyen direkt REST çağrısı.
+    """
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    headers = {"Content-Type": "application/json"}
+    
+    # Eğer OAuth token ise Authorization header'ı ekle
+    if api_key.startswith("AQ.") or api_key.startswith("ya29."):
+        headers["Authorization"] = f"Bearer {api_key}"
+    
+    payload = {
+        "contents": [{
+            "parts": [{"text": prompt_text}]
+        }]
+    }
+    
+    res = requests.post(url, headers=headers, json=payload)
+    if res.status_code == 200:
+        data = res.json()
+        return data['candidates'][0]['content']['parts'][0]['text']
+    else:
+        raise Exception(f"HTTP {res.status_code}: {res.text}")
 
 @st.cache_resource
 def load_vectorstore():
@@ -156,7 +180,7 @@ with st.sidebar:
     
     available_providers = []
     if gemini_api_key:
-        available_providers.append("Google Gemini (Direct REST)")
+        available_providers.append("Google Gemini (Direct API)")
     if openrouter_api_key:
         available_providers.append("OpenRouter (Gemini 2.0 Flash Lite)")
         
@@ -197,12 +221,6 @@ system_prompt = (
     "4. 'REFERANS DOKÜMAN' alanında bilgi varsa gelen metindeki verileri analiz edip detaylıca yanıtla.\n\n"
     "REFERANS DOKÜMAN:\n{context}"
 )
-
-prompt = ChatPromptTemplate.from_messages([
-    ("system", system_prompt),
-    MessagesPlaceholder(variable_name="chat_history"),
-    ("human", "{question}"),
-])
 
 # ---------------------------------------------------------
 # 7. SOHBET ARAYÜZÜ VE İŞLEME
@@ -249,32 +267,26 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                 
                 context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "Yok"
 
-                history_objs = []
+                # Sohbet geçmişini metin formatında birleştir
                 raw_history = load_messages_from_db()[:-1]
-                for m in raw_history[-8:]:
-                    if m["role"] == "user":
-                        history_objs.append(HumanMessage(content=m["content"]))
-                    else:
-                        history_objs.append(AIMessage(content=m["content"]))
+                history_text = ""
+                for m in raw_history[-6:]:
+                    role_str = "Kullanıcı" if m["role"] == "user" else "Asistan"
+                    history_text += f"{role_str}: {m['content']}\n"
 
-                formatted_prompt = prompt.format_messages(
-                    context=context_text,
-                    chat_history=history_objs,
-                    question=user_input
+                full_prompt = (
+                    f"{system_prompt.format(context=context_text)}\n\n"
+                    f"ÖNCEKİ KONUŞMALAR:\n{history_text}\n"
+                    f"Kullanıcı: {user_input}\n"
+                    f"Asistan:"
                 )
-                
-                llm_response = None
+
+                response_text = None
                 last_error = ""
 
                 try:
-                    if "Google Gemini (Direct REST)" in selected_provider:
-                        # Direct OpenAI-compatible endpoint call for Google Gemini
-                        llm = ChatOpenAI(
-                            model="gemini-2.0-flash",
-                            api_key=gemini_api_key,
-                            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-                            temperature=0.4
-                        )
+                    if "Google Gemini (Direct API)" in selected_provider:
+                        response_text = call_direct_gemini(full_prompt, gemini_api_key)
                     else:
                         llm = ChatOpenAI(
                             model="google/gemini-2.0-flash-lite-001",
@@ -282,15 +294,13 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                             openai_api_base="https://openrouter.ai/api/v1",
                             temperature=0.4
                         )
-
-                    llm_response = llm.invoke(formatted_prompt)
+                        res = llm.invoke(full_prompt)
+                        response_text = res.content
 
                 except Exception as err:
                     last_error = str(err)
 
-                if llm_response:
-                    response_text = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
-
+                if response_text:
                     sources = []
                     seen = set()
                     for doc in relevant_docs:
