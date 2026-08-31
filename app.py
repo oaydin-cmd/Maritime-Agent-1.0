@@ -156,9 +156,11 @@ with st.sidebar:
         "Model Seçin:",
         [
             "llama-3.1-8b-instant",
+            "llama-3.3-70b-versatile",
             "llama3-70b-8192",
             "llama3-8b-8192",
-            "mixtral-8x7b-32768"
+            "mixtral-8x7b-32768",
+            "gemma2-9b-it"
         ]
     )
 
@@ -194,7 +196,7 @@ system_prompt = (
 )
 
 # ---------------------------------------------------------
-# 7. SOHBET ARAYÜZÜ VE CANLI YANIT İŞLEME (STREAMING)
+# 7. SOHBET ARAYÜZÜ VE CANLI YANIT İŞLEME (STREAMING + FALLBACK)
 # ---------------------------------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = load_messages_from_db()
@@ -255,19 +257,37 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
             )
 
             try:
-                # Groq Bağlantısı
+                # Groq Bağlantısı (İlk Deneme)
                 llm = ChatGroq(
                     groq_api_key=groq_api_key,
                     model_name=groq_model,
                     temperature=0.3
                 )
-                
-                # 1. LangChain stream jeneratörü oluşturuluyor
                 response_stream = llm.stream(full_prompt)
-                
-                # 2. Canlı kelime akışı ile ekrana yazdırılıyor
                 response_text = st.write_stream(response_stream)
 
+            except Exception as err:
+                # Model bulunamadı hatasında otomatik yedek modele geçiş (Fallback)
+                if "model_not_found" in str(err) or "404" in str(err):
+                    fallback_model = "llama3-70b-8192" if groq_model != "llama3-70b-8192" else "mixtral-8x7b-32768"
+                    st.warning(f"⚠️ `{groq_model}` bulunamadı, otomatik olarak `{fallback_model}` modeline geçiliyor...")
+                    
+                    try:
+                        llm_fallback = ChatGroq(
+                            groq_api_key=groq_api_key,
+                            model_name=fallback_model,
+                            temperature=0.3
+                        )
+                        response_stream = llm_fallback.stream(full_prompt)
+                        response_text = st.write_stream(response_stream)
+                    except Exception as fb_err:
+                        st.error(f"❌ Groq API Hatası: {str(fb_err)}")
+                        response_text = None
+                else:
+                    st.error(f"❌ Groq API Hatası: {str(err)}")
+                    response_text = None
+
+            if response_text:
                 # Referans doküman kaynaklarını ekleme
                 sources = []
                 seen = set()
@@ -309,6 +329,3 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                     "docx_bytes": docx_bytes,
                     "file_name": file_name
                 })
-
-            except Exception as err:
-                st.error(f"❌ Groq API Hatası: {str(err)}")
