@@ -15,7 +15,7 @@ from langchain_openai import ChatOpenAI
 # 1. STREAMLIT SAYFA YAPILANDIRMASI
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="Maritime & SMS RAG Assistant",
+    page_title="Maritime Agent",
     page_icon="⚓",
     layout="wide"
 )
@@ -23,13 +23,15 @@ st.set_page_config(
 st.title("⚓ Denizcilik & SMS RAG Asistanı")
 
 # ---------------------------------------------------------
-# 2. SQLITE VERİTABANI VE GEÇMİŞ YÖNETİMİ
+# 2. SQLITE VERİTABANI VE GEÇMİŞ YÖNETİMİ (MIGRATION EKLENDİ)
 # ---------------------------------------------------------
 DB_FILE = "chat_history.db"
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
+    
+    # Tabloyu oluştur
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,6 +42,16 @@ def init_db():
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    
+    # Eksik sütun kontrolü (Eski veritabanları için migration)
+    cursor.execute("PRAGMA table_info(messages)")
+    columns = [column[1] for column in cursor.fetchall()]
+    
+    if "docx_bytes" not in columns:
+        cursor.execute("ALTER TABLE messages ADD COLUMN docx_bytes BLOB")
+    if "file_name" not in columns:
+        cursor.execute("ALTER TABLE messages ADD COLUMN file_name TEXT")
+        
     conn.commit()
     conn.close()
 
@@ -156,7 +168,6 @@ system_prompt = (
     "REFERANS DOKÜMAN:\n{context}"
 )
 
-# PROMPT GLOBAL SEVİYEDE TANIMLANDI (NameError Engellendi)
 prompt = ChatPromptTemplate.from_messages([
     ("system", system_prompt),
     MessagesPlaceholder(variable_name="chat_history"),
