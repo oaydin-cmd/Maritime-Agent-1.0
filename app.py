@@ -277,7 +277,7 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                         )
                     elif "OpenRouter" in selected_provider:
                         llm = ChatOpenAI(
-                            model="google/gemini-2.0-flash-00",
+                            model="google/gemini-2.0-flash-01",
                             openai_api_key=openrouter_api_key,
                             openai_api_base="https://openrouter.ai/api/v1",
                             temperature=0.4
