@@ -132,8 +132,7 @@ vectorstore = load_vectorstore()
 # ---------------------------------------------------------
 # 5. YAN MENÜ (SIDEBAR) & GROQ AYARLARI
 # ---------------------------------------------------------
-# Groq API Key'inizi doğrudan buraya tırnak içine ekleyebilirsiniz (örnek: "gsk_abc123...")
-HARDCODED_GROQ_KEY = "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"
+HARDCODED_GROQ_KEY = "" # İsterseniz API anahtarınızı buraya yazabilirsiniz
 
 groq_api_key = st.secrets.get("GROQ_API_KEY", HARDCODED_GROQ_KEY)
 
@@ -158,8 +157,9 @@ with st.sidebar:
         [
             "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
-            "mixtral-8x7b-32768",
-            "deepseek-r1-distill-llama-70b"
+            "llama3-70b-8192",
+            "llama3-8b-8192",
+            "mixtral-8x7b-32768"
         ]
     )
 
