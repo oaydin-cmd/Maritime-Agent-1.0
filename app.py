@@ -15,12 +15,12 @@ from langchain_openai import ChatOpenAI
 # 1. STREAMLIT SAYFA YAPILANDIRMASI
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="Maritime & SMS RAG Assistant",
+    page_title="Maritime Assistant",
     page_icon="⚓",
     layout="wide"
 )
 
-st.title("⚓ Denizcilik & SMS RAG Asistanı")
+st.title("⚓ Maritime Assistant")
 
 # ---------------------------------------------------------
 # 2. SQLITE VERİTABANI VE GEÇMİŞ YÖNETİMİ (MIGRATION EKLENDİ)
