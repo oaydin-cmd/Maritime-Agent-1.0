@@ -9,29 +9,30 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
+
+# Google Gemini Entegrasyonu
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 
 # ---------------------------------------------------------
 # 1. STREAMLIT SAYFA YAPILANDIRMASI
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="Maritime Assistant",
+    page_title="Maritime & SMS RAG Assistant",
     page_icon="⚓",
     layout="wide"
 )
 
-st.title("⚓ Maritime Assistant")
+st.title("⚓ Denizcilik & SMS RAG Asistanı")
 
 # ---------------------------------------------------------
-# 2. SQLITE VERİTABANI VE GEÇMİŞ YÖNETİMİ (MIGRATION EKLENDİ)
+# 2. SQLITE VERİTABANI VE MIGRATION
 # ---------------------------------------------------------
 DB_FILE = "chat_history.db"
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    
-    # Tabloyu oluştur
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,7 +44,7 @@ def init_db():
         )
     """)
     
-    # Eksik sütun kontrolü (Eski veritabanları için migration)
+    # Eksik sütun kontrolü (DB Migration)
     cursor.execute("PRAGMA table_info(messages)")
     columns = [column[1] for column in cursor.fetchall()]
     
@@ -82,6 +83,13 @@ def load_messages_from_db():
         })
     return messages
 
+def clear_db():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM messages")
+    conn.commit()
+    conn.close()
+
 init_db()
 
 # ---------------------------------------------------------
@@ -111,13 +119,11 @@ def create_docx_bytes(content_text, title="SMS & Denizcilik Asistan Raporu"):
     return bio.getvalue()
 
 # ---------------------------------------------------------
-# 4. API KEY & FAISS VEKTÖR VERİTABANI YÜKLEME
+# 4. API KEYLERİ VE FAISS YÜKLEME
 # ---------------------------------------------------------
-api_key = None
-if "OPENROUTER_API_KEY" in st.secrets:
-    api_key = st.secrets["OPENROUTER_API_KEY"]
-elif "DEEPSEEK_API_KEY" in st.secrets:
-    api_key = st.secrets["DEEPSEEK_API_KEY"]
+gemini_api_key = st.secrets.get("GEMINI_API_KEY", None)
+openrouter_api_key = st.secrets.get("OPENROUTER_API_KEY", None)
+deepseek_api_key = st.secrets.get("DEEPSEEK_API_KEY", None)
 
 @st.cache_resource
 def load_vectorstore():
@@ -127,33 +133,60 @@ def load_vectorstore():
             embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
             return FAISS.load_local(index_path, embeddings, allow_dangerous_deserialization=True)
         except Exception as e:
-            st.warning(f"Vektör veritabanı yüklenirken hata oluştu: {e}")
+            st.sidebar.error(f"Vektör Veritabanı Hatası: {e}")
             return None
     return None
 
 vectorstore = load_vectorstore()
 
 # ---------------------------------------------------------
-# 5. AKILLI API VE DINAMIK PROMPT YAPISI
+# 5. YAN MENÜ (SIDEBAR) & MODEL SEÇİMİ
+# ---------------------------------------------------------
+with st.sidebar:
+    st.header("⚙️ Kontrol Paneli")
+    
+    st.subheader("📚 Doküman Veritabanı")
+    if vectorstore:
+        st.success("🟢 FAISS Veritabanı Aktif")
+    else:
+        st.warning("🟡 FAISS Veritabanı Bulunamadı")
+    
+    st.divider()
+    
+    st.subheader("🤖 AI Model Sağlayıcı")
+    
+    available_providers = []
+    if gemini_api_key:
+        available_providers.append("Google Gemini (Resmi API)")
+    if openrouter_api_key:
+        available_providers.append("OpenRouter")
+    if deepseek_api_key:
+        available_providers.append("DeepSeek Direct")
+        
+    if available_providers:
+        selected_provider = st.selectbox("Sağlayıcı Seçin:", available_providers)
+    else:
+        st.error("🔑 Secrets alanında tanımlı API Key bulunamadı.")
+        selected_provider = None
+
+    st.divider()
+
+    st.subheader("🔍 Arama Hassasiyeti")
+    k_docs = st.slider("Getirilecek Doküman Sayısı (k):", min_value=1, max_value=10, value=5)
+    
+    st.divider()
+
+    if st.button("🗑️ Sohbet Geçmişini Temizle", use_container_width=True):
+        clear_db()
+        st.session_state.messages = []
+        st.rerun()
+
+# ---------------------------------------------------------
+# 6. PROMPT YAPISI
 # ---------------------------------------------------------
 retriever = None
 if vectorstore:
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-
-target_models = ["deepseek-chat"]
-api_base = "https://api.deepseek.com"
-
-if api_key:
-    if api_key.startswith("sk-or-"):
-        api_base = "https://openrouter.ai/api/v1"
-        target_models = [
-            "google/gemini-2.0-flash-001",
-            "meta-llama/llama-3.3-70b-instruct",
-            "deepseek/deepseek-chat"
-        ]
-    else:
-        api_base = "https://api.deepseek.com"
-        target_models = ["deepseek-chat", "deepseek-reasoner"]
+    retriever = vectorstore.as_retriever(search_kwargs={"k": k_docs})
 
 current_time_str = datetime.datetime.now().strftime("%d.%m.%Y, %A")
 
@@ -175,7 +208,7 @@ prompt = ChatPromptTemplate.from_messages([
 ])
 
 # ---------------------------------------------------------
-# 6. SOHBET ARAYÜZÜ VE İŞLEME
+# 7. SOHBET ARAYÜZÜ VE İŞLEME
 # ---------------------------------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = load_messages_from_db()
@@ -194,8 +227,8 @@ for idx, message in enumerate(st.session_state.messages):
             )
 
 if user_input := st.chat_input("Mesajınızı yazın..."):
-    if not api_key:
-        st.error("⚠️ `.streamlit/secrets.toml` içinde geçerli bir API Key bulunamadı.")
+    if not selected_provider:
+        st.error("⚠️ Lütfen geçerli bir API Key tanımlayın.")
     else:
         st.session_state.messages.append({"role": "user", "content": user_input})
         save_message_to_db("user", user_input)
@@ -236,22 +269,32 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                 llm_response = None
                 last_error = ""
 
-                for model_name in target_models:
-                    try:
-                        llm = ChatOpenAI(
-                            model=model_name,
-                            openai_api_key=api_key,
-                            openai_api_base=api_base,
-                            temperature=0.4,
-                            timeout=25,
-                            max_retries=0,
-                            default_headers={"HTTP-Referer": "http://localhost:8501", "X-Title": "Maritime Assistant"}
+                try:
+                    if "Google Gemini" in selected_provider:
+                        llm = ChatGoogleGenerativeAI(
+                            model="gemini-2.0-flash",
+                            google_api_key=gemini_api_key,
+                            temperature=0.4
                         )
-                        llm_response = llm.invoke(formatted_prompt)
-                        break
-                    except Exception as err:
-                        last_error = str(err)
-                        continue
+                    elif "OpenRouter" in selected_provider:
+                        llm = ChatOpenAI(
+                            model="google/gemini-2.0-flash-001",
+                            openai_api_key=openrouter_api_key,
+                            openai_api_base="https://openrouter.ai/api/v1",
+                            temperature=0.4
+                        )
+                    else:
+                        llm = ChatOpenAI(
+                            model="deepseek-chat",
+                            openai_api_key=deepseek_api_key,
+                            openai_api_base="https://api.deepseek.com",
+                            temperature=0.4
+                        )
+
+                    llm_response = llm.invoke(formatted_prompt)
+
+                except Exception as err:
+                    last_error = str(err)
 
                 if llm_response:
                     response_text = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
@@ -296,4 +339,4 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                         "file_name": file_name
                     })
                 else:
-                    st.error(f"❌ API Hatası: {last_error if last_error else 'Servis yanıt vermedi.'}\n\nLütfen secrets dosyasındaki API key'inizi kontrol edin.")
+                    st.error(f"❌ API Hatası: {last_error if last_error else 'Servis yanıt vermedi.'}")
