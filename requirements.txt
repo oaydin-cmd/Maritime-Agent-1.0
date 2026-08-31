@@ -15,3 +15,5 @@ pytesseract
 python-docx
 langchain-google-genai
 google-generativeai
+langchain-community
+langchain-groq
