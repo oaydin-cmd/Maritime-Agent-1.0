@@ -3,16 +3,11 @@ import sqlite3
 import datetime
 import io
 import docx
-import requests
 import streamlit as st
 
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import HumanMessage, AIMessage
-
-# OpenRouter için ChatOpenAI
-from langchain_openai import ChatOpenAI
+from langchain_groq import ChatGroq
 
 # ---------------------------------------------------------
 # 1. STREAMLIT SAYFA YAPILANDIRMASI
@@ -23,7 +18,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("⚓ Denizcilik & SMS RAG Asistanı")
+st.title("⚓ Denizcilik & SMS RAG Asistanı (Groq Destekli)")
 
 # ---------------------------------------------------------
 # 2. SQLITE VERİTABANI VE MIGRATION
@@ -118,36 +113,8 @@ def create_docx_bytes(content_text, title="SMS & Denizcilik Asistan Raporu"):
     return bio.getvalue()
 
 # ---------------------------------------------------------
-# 4. DIRECT GEMINI API ÇAĞRISI (TOKEN / KEY HANDLER)
+# 4. VEKTÖR VERİTABANI YÜKLEME
 # ---------------------------------------------------------
-HARDCODED_GEMINI_KEY = "AQ.Ab8RN6KiqPcMC_qS3DXOYuRe8EaNMIGoxrm-6f2hf3s2IWZGaQ"
-gemini_api_key = st.secrets.get("GEMINI_API_KEY", HARDCODED_GEMINI_KEY)
-openrouter_api_key = st.secrets.get("OPENROUTER_API_KEY", None)
-
-def call_direct_gemini(prompt_text, api_key):
-    """
-    Hem standart API key hem de OAuth Bearer Token formatlarını destekleyen direkt REST çağrısı.
-    """
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-    headers = {"Content-Type": "application/json"}
-    
-    # Eğer OAuth token ise Authorization header'ı ekle
-    if api_key.startswith("AQ.") or api_key.startswith("ya29."):
-        headers["Authorization"] = f"Bearer {api_key}"
-    
-    payload = {
-        "contents": [{
-            "parts": [{"text": prompt_text}]
-        }]
-    }
-    
-    res = requests.post(url, headers=headers, json=payload)
-    if res.status_code == 200:
-        data = res.json()
-        return data['candidates'][0]['content']['parts'][0]['text']
-    else:
-        raise Exception(f"HTTP {res.status_code}: {res.text}")
-
 @st.cache_resource
 def load_vectorstore():
     index_path = "faiss_index"
@@ -163,10 +130,19 @@ def load_vectorstore():
 vectorstore = load_vectorstore()
 
 # ---------------------------------------------------------
-# 5. YAN MENÜ (SIDEBAR) & MODEL SEÇİMİ
+# 5. YAN MENÜ (SIDEBAR) & GROQ AYARLARI
 # ---------------------------------------------------------
+# Groq API Key'inizi doğrudan buraya tırnak içine ekleyebilirsiniz (örnek: "gsk_abc123...")
+HARDCODED_GROQ_KEY = "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"
+
+groq_api_key = st.secrets.get("GROQ_API_KEY", HARDCODED_GROQ_KEY)
+
 with st.sidebar:
     st.header("⚙️ Kontrol Paneli")
+    
+    st.subheader("🔑 API Anahtarı")
+    if not groq_api_key:
+        groq_api_key = st.text_input("Groq API Key (gsk_...):", type="password")
     
     st.subheader("📚 Doküman Veritabanı")
     if vectorstore:
@@ -176,19 +152,16 @@ with st.sidebar:
     
     st.divider()
     
-    st.subheader("🤖 AI Model Sağlayıcı")
-    
-    available_providers = []
-    if gemini_api_key:
-        available_providers.append("Google Gemini (Direct API)")
-    if openrouter_api_key:
-        available_providers.append("OpenRouter (Gemini 2.0 Flash Lite)")
-        
-    if available_providers:
-        selected_provider = st.selectbox("Sağlayıcı Seçin:", available_providers)
-    else:
-        st.error("🔑 API Key bulunamadı.")
-        selected_provider = None
+    st.subheader("🤖 Groq Model Seçimi")
+    groq_model = st.selectbox(
+        "Model Seçin:",
+        [
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "mixtral-8x7b-32768",
+            "deepseek-r1-distill-llama-70b"
+        ]
+    )
 
     st.divider()
 
@@ -215,10 +188,9 @@ system_prompt = (
     f"Bugünün tarihi ve günü: {current_time_str}.\n"
     "Sen akıllı, zeki ve doğal yanıt veren bir asistansın. Şirket dokümanları, formlar, raporlar ve denizcilik/SMS konularında uzmansın.\n\n"
     "KURALLAR:\n"
-    "1. Kullanıcı ne derse ona doğrudan, mantıklı ve insan gibi yanıt ver.\n"
-    "2. Tarih, gün veya saat sorulduğunda sana verilen güncel tarih bilgisini kullan.\n"
-    "3. Form, liste veya rapor istendiğinde düzenli, başlıklandırılmış ve net bir format sun.\n"
-    "4. 'REFERANS DOKÜMAN' alanında bilgi varsa gelen metindeki verileri analiz edip detaylıca yanıtla.\n\n"
+    "1. Kullanıcı ne derse ona doğrudan, mantıklı ve Türkçe yanıt ver.\n"
+    "2. Form, liste veya rapor istendiğinde düzenli, başlıklandırılmış ve net bir format sun.\n"
+    "3. 'REFERANS DOKÜMAN' alanında bilgi varsa gelen metindeki verileri analiz edip detaylıca yanıtla.\n\n"
     "REFERANS DOKÜMAN:\n{context}"
 )
 
@@ -228,6 +200,7 @@ system_prompt = (
 if "messages" not in st.session_state:
     st.session_state.messages = load_messages_from_db()
 
+# Veritabanındaki eski mesajları ekrana çizdirme
 for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -241,9 +214,10 @@ for idx, message in enumerate(st.session_state.messages):
                 key=f"dl_{idx}"
             )
 
+# Kullanıcı yeni girdi girdiğinde
 if user_input := st.chat_input("Mesajınızı yazın..."):
-    if not selected_provider:
-        st.error("⚠️ Lütfen geçerli bir API Key tanımlayın.")
+    if not groq_api_key or not groq_api_key.startswith("gsk_"):
+        st.error("⚠️ Lütfen sol menüden veya kod içerisinden geçerli bir Groq API Key tanımlayın (`gsk_...`).")
     else:
         st.session_state.messages.append({"role": "user", "content": user_input})
         save_message_to_db("user", user_input)
@@ -252,7 +226,8 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            with st.spinner("Yazıyor..."):
+            with st.spinner("Groq yanıt hazırlıyor..."):
+                # RAG (Vektör araması) tetikleme kelimeleri
                 keywords = [
                     "sms", "prosedür", "denetim", "sire", "solas", "marpol", "kural", "form", 
                     "checklist", "tanker", "gemi", "güverte", "makine", "isps", "ism", "rapor", 
@@ -267,7 +242,7 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                 
                 context_text = "\n\n".join([d.page_content for d in relevant_docs]) if relevant_docs else "Yok"
 
-                # Sohbet geçmişini metin formatında birleştir
+                # Sohbet geçmişini al
                 raw_history = load_messages_from_db()[:-1]
                 history_text = ""
                 for m in raw_history[-6:]:
@@ -281,26 +256,18 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                     f"Asistan:"
                 )
 
-                response_text = None
-                last_error = ""
-
                 try:
-                    if "Google Gemini (Direct API)" in selected_provider:
-                        response_text = call_direct_gemini(full_prompt, gemini_api_key)
-                    else:
-                        llm = ChatOpenAI(
-                            model="google/gemini-2.0-flash-lite-001",
-                            openai_api_key=openrouter_api_key,
-                            openai_api_base="https://openrouter.ai/api/v1",
-                            temperature=0.4
-                        )
-                        res = llm.invoke(full_prompt)
-                        response_text = res.content
+                    # Groq Bağlantısı
+                    llm = ChatGroq(
+                        groq_api_key=groq_api_key,
+                        model_name=groq_model,
+                        temperature=0.3
+                    )
+                    
+                    res = llm.invoke(full_prompt)
+                    response_text = res.content
 
-                except Exception as err:
-                    last_error = str(err)
-
-                if response_text:
+                    # Referans doküman kaynaklarını ekleme
                     sources = []
                     seen = set()
                     for doc in relevant_docs:
@@ -317,6 +284,7 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
 
                     st.markdown(final_response)
 
+                    # Word indirme butonu şartları
                     form_keywords = ["form", "rapor", "hazırla", "oluştur", "docx", "word", "maddeler", "checklist", "incele"]
                     docx_bytes = None
                     file_name = None
@@ -340,5 +308,6 @@ if user_input := st.chat_input("Mesajınızı yazın..."):
                         "docx_bytes": docx_bytes,
                         "file_name": file_name
                     })
-                else:
-                    st.error(f"❌ API Hatası: {last_error if last_error else 'Servis yanıt vermedi.'}")
+
+                except Exception as err:
+                    st.error(f"❌ Groq API Hatası: {str(err)}")
